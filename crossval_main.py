@@ -242,14 +242,14 @@ if __name__ == "__main__":
     #         n_splits=5
     #     )
     res = cross_val_experiment(
-        dataset_name="ChessKp",
-        model_type="rf",
-        num_mfs=2,
-        max_rules=500,
+        dataset_name="ChessK",
+        model_type="noHyb",
+        num_mfs=4,
+        max_rules=4096,
         seed=45,
         lr=0.001,
-        num_epochs=200,
-        n_splits=5)
+        num_epochs=100,
+        n_splits=3)
     results.append(res)
 
     df_results = pd.DataFrame(results)

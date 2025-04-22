@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import os
 import seaborn as sns
 from sklearn.cluster import KMeans
+import umap.umap_ as umap
 
 def load_Poker_data(test_size=0.3, random_state=42):
     # fetch dataset 
@@ -20,7 +21,10 @@ def load_Poker_data(test_size=0.3, random_state=42):
     
     # data (as pandas dataframes) 
     X = poker_hand.data.features 
-    y = poker_hand.data.targets 
+    y = poker_hand.data.targets
+    
+    
+
     
     scaler = MinMaxScaler()
     x_scaled = scaler.fit_transform(X)
@@ -33,6 +37,7 @@ def load_Poker_data(test_size=0.3, random_state=42):
         x_scaled, y, test_size=test_size, shuffle=True, random_state=random_state
     )
     
+    
     # Eventuelle NaN-Werte ersetzen
     X_train_np = np.nan_to_num(X_train_np, nan=0.0)
     X_test_np  = np.nan_to_num(X_test_np,  nan=0.0)
@@ -43,9 +48,18 @@ def load_Poker_data(test_size=0.3, random_state=42):
     X_test  = torch.tensor(X_test_np, dtype=torch.float32)
     y_test  = torch.tensor(y_test_np, dtype=torch.long)
     
+    
+    X_train_short = torch.narrow(X_train, 0, 0, 10000)
+    y_train_short = torch.narrow(y_train, 0, 0, 10000)
+    X_test_short = torch.narrow(X_test, 0, 0, 10000)
+    y_test_short = torch.narrow(y_test, 0, 0, 10000)
+    
+    print(X_train_short.shape)
+    
     #print("y_train shape:", y_train.shape)
     
-    return X_train, y_train, X_test, y_test
+    #return X_train, y_train, X_test, y_test
+    return X_train_short, y_train_short, X_test_short, y_test_short
 
 def load_K_chess_data_splitted(test_size=0.3, random_state=42):
     df = loadK()
@@ -216,36 +230,56 @@ def load_K_chess_data(test_size=0.3, random_state=42):
     return X_train, y_train, X_test, y_test, X_train_np, X, y
 
 def get_chessK_full():
-    """
-    Returns the *entire* ChessK dataset in NumPy form: (X_np, y_np).
-    No train/test split here, so cross-validation can do its own splits.
-    """
-    chess_king_rook_vs_king = fetch_ucirepo(id=23)
-    X_df = chess_king_rook_vs_king.data.features
-    y_df = chess_king_rook_vs_king.data.targets
+    df = loadK()
+    #     # Annahme: Die letzte Spalte ist die Zielvariable
+    #    # Features und Label trennen
+    
+    
+    df.rename(columns={
+        'V1': 'white-king-file',
+        'V2': 'white-rook-file',
+        'V3': 'black-king-file'
+    }, inplace=True)
+    X = df.drop(columns=['Class'])
+    y = df['Class']
 
-    # Example: do numeric scaling if needed
-    numeric_cols = X_df.select_dtypes(include=['float64', 'int']).columns
-    if len(numeric_cols) > 0:
-        scaler = MinMaxScaler()
-        X_df[numeric_cols] = scaler.fit_transform(X_df[numeric_cols])
-
-    cat_cols = X_df.select_dtypes(include=['object']).columns
-    if len(cat_cols) > 0:
-        X_df = pd.get_dummies(X_df, columns=cat_cols)
+    chess_king_rook_vs_king = fetch_ucirepo(id=23) 
 
     
+    # # data (as pandas dataframes) 
+    X = chess_king_rook_vs_king.data.features 
+    y = chess_king_rook_vs_king.data.targets 
+    
+    encoder = OrdinalEncoder()
+    
+    xWkf = np.array(X['white-king-file']).reshape(-1,1)
+    xWrf = np.array(X['white-rook-file']).reshape(-1,1)
+    xBkf = np.array(X['black-king-file']).reshape(-1,1)
+    
+    
+
+    X.loc[:, 'white-king-file'] = encoder.fit_transform(xWkf)
+    X.loc[:, 'white-rook-file'] = encoder.fit_transform(xWrf)
+    X.loc[:, 'black-king-file'] = encoder.fit_transform(xBkf)
+
+    # Numerische Features skalieren
+    scaler = MinMaxScaler()
+    X_processed = scaler.fit_transform(X)
+    
+    X_processed = X_processed.astype(np.float32)
+
+    # Label kodieren (falls nötig)
     le = LabelEncoder()
-    y_encoded = le.fit_transform(y_df)
-    print(X_df.shape, "jkl")
+    #y_encoded = le.fit_transform(y)
+    y_encoded = le.fit_transform(y.values.ravel())
 
 
     # Convert to numpy
-    X_np = X_df.to_numpy(dtype=np.float32)
+   
     # If y_df is a Series, convert to int array
-    y_np = y_encoded.astype(int)
+    #y_np = y_encoded.astype(int)
 
-    return X_np, y_np
+    return X_processed, y_encoded
 
 def get_iris_full():
     data = load_iris()
@@ -264,33 +298,36 @@ def get_chessKp_full():
     chess_king_rook_vs_king_pawn = fetch_ucirepo(id=22)
     X_df = chess_king_rook_vs_king_pawn.data.features
     y_df = chess_king_rook_vs_king_pawn.data.targets
-
-    numeric_cols = X_df.select_dtypes(include=['float64', 'int']).columns
-    if len(numeric_cols) > 0:
-        scaler = MinMaxScaler()
-        X_df[numeric_cols] = scaler.fit_transform(X_df[numeric_cols])
-
-    cat_cols = X_df.select_dtypes(include=['object']).columns
-    if len(cat_cols) > 0:
-        X_df = pd.get_dummies(X_df, columns=cat_cols)
+    
+    print(X_df['white-king-file'])
+    
+    
+    encoder = OrdinalEncoder()
+    
+    X_df = encoder.fit_transform(X_df)
+    
+    
+    # Numerische Features skalieren
+    scaler = MinMaxScaler()
+    X_processed = scaler.fit_transform(X_df)
+    X_processed = X_processed.astype(np.float32)
     
     le = LabelEncoder()
     y_encoded = le.fit_transform(y_df)
-
     
-
-    X_np = X_df.to_numpy(dtype=np.float32)
+    
+    
     if not (isinstance(y_encoded, np.ndarray)):
         y_np = y_encoded.to_numpy(dtype=int)
     else:
         y_np = y_encoded
     
-    return X_np, y_np
+    return X_processed, y_np
 
 
 
 def load_Kp_chess_data(test_size=0.3, random_state=42):
-    # df = loadKP()
+    df = loadKP()
     #     # Annahme: Die letzte Spalte ist die Zielvariable
     #    # Features und Label trennen
     # X = df.drop(columns=['Class'])
@@ -354,7 +391,7 @@ def load_heart_data(test_size=0.3, random_state=42):
     heart = fetch_ucirepo(id=45)
     X_df = heart.data.features
     y_df = heart.data.targets.squeeze()
-    
+    print(X_df.head)
 
     # => Split
     X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
@@ -365,7 +402,7 @@ def load_heart_data(test_size=0.3, random_state=42):
     X_test_np  = np.nan_to_num(X_test_np,  nan=0.0)
 
     # scale
-    scaler = StandardScaler()
+    scaler = MinMaxScaler()
     X_train_np = scaler.fit_transform(X_train_np)
     X_test_np  = scaler.transform(X_test_np)
 
@@ -374,6 +411,7 @@ def load_heart_data(test_size=0.3, random_state=42):
     y_train = torch.tensor(y_train_np.to_numpy(), dtype=torch.long)
     X_test  = torch.tensor(X_test_np,  dtype=torch.float32)
     y_test  = torch.tensor(y_test_np.to_numpy(),  dtype=torch.long)
+
 
     return X_train, y_train, X_test, y_test
 
@@ -494,52 +532,69 @@ def show_ChessK():
         
 
 if __name__ == "__main__":
-    X_train1, y_train, X_test, y_test = load_K_chess_data_splitted()
-    X_train2, y_train, X_test, y_test = load_K_chess_data_OneHot()
-    X_train3, y_train, X_test, y_test = load_iris_data()
-    X_train4, y_train, X_test, y_test = load_heart_data()
-    X_train5, y_train, X_test, y_test, s = load_abalon_data()
-    X_train6, y_train, X_test, y_test, s = load_Kp_chess_data()
-    X_train7, y_train, X_test, y_test, = load_Poker_data()
+   # X_train1, y_train, X_test, y_test = load_K_chess_data_splitted()
+    #X_train2, y_train, X_test, y_test = load_K_chess_data_OneHot()
+    #X_train3, y_train, X_test, y_test = load_iris_data()
+    #X_train4, y_train, X_test, y_test = load_heart_data()
+    # X_train5, y_train, X_test, y_test, s = load_abalon_data()
+    # X_train6, y_train, X_test, y_test, s = load_Kp_chess_data()
+    #X_train, y_train, X_test, y_test, = load_Poker_data()
     
-    data_list = [X_train1, X_train2, X_train3, X_train4, X_train5, X_train6, X_train7]
+    get_chessKp_full()
     
-    from sklearn.cluster import DBSCAN
-    from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
-    
-    for X_train in data_list:
-        
-        
-        kmax = 8
-        # X_train in NumPy umwandeln
-        X_train_np = X_train.detach().cpu().numpy()
-        n_samples, n_features = X_train_np.shape
-        wss_all_features = {}  # Dictionary: key = Feature-Index, value = Liste der WSS für k=1 bis kmax
+    # if not isinstance(y_train, np.ndarray):
+    #     y_train = y_train.cpu().numpy()
 
-        # Für jedes Feature separat:
-        for feature_idx in range(n_features):
-            # Daten des aktuellen Features als 2D-Array: (n_samples, 1)
-            data = X_train_np[:, feature_idx].reshape(-1, 1)
-            wss_feature = []
-            # k von 1 bis kmax
-            for k in range(1, kmax + 1):
-                km = KMeans(n_clusters=k, random_state=0, n_init='auto')
-                km.fit(data)
-                # km.inertia_ liefert die Summe der quadratischen Abstände (WSS)
-                wss_feature.append(km.inertia_)
-            wss_all_features[f"feature_{feature_idx}"] = wss_feature
+    # # Führe UMAP aus, um die Dimensionen von X_train3 zu reduzieren (n_components=2 für 2D)
+    # umap_model = umap.UMAP(n_components=3, random_state=42)
+    # embedding = umap_model.fit_transform(X_train)
+
+    # # Plot: Wir verwenden das Colormap 'Spectral', um unterschiedliche Zielklassen (Targets) farblich zu differenzieren.
+    # plt.figure(figsize=(10, 8))
+    # scatter = plt.scatter(embedding[:, 0], embedding[:, 1], c=y_train, cmap='Spectral', s=50, alpha=0.8)
+    # plt.colorbar(scatter, label="Zielklasse")
+    # plt.title("UMAP-Embedding Trainingsdaten")
+    # plt.xlabel("UMAP Dimension 1")
+    # plt.ylabel("UMAP Dimension 2")
+    # plt.show()
+    # data_list = [X_train1, X_train2, X_train3, X_train4, X_train5, X_train6, X_train7]
+    
+    # from sklearn.cluster import DBSCAN
+    # from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
+    
+    # for X_train in data_list:
+        
+        
+    #     kmax = 8
+    #     # X_train in NumPy umwandeln
+    #     X_train_np = X_train.detach().cpu().numpy()
+    #     n_samples, n_features = X_train_np.shape
+    #     wss_all_features = {}  # Dictionary: key = Feature-Index, value = Liste der WSS für k=1 bis kmax
+
+    #     # Für jedes Feature separat:
+    #     for feature_idx in range(n_features):
+    #         # Daten des aktuellen Features als 2D-Array: (n_samples, 1)
+    #         data = X_train_np[:, feature_idx].reshape(-1, 1)
+    #         wss_feature = []
+    #         # k von 1 bis kmax
+    #         for k in range(1, kmax + 1):
+    #             km = KMeans(n_clusters=k, random_state=0, n_init='auto')
+    #             km.fit(data)
+    #             # km.inertia_ liefert die Summe der quadratischen Abstände (WSS)
+    #             wss_feature.append(km.inertia_)
+    #         wss_all_features[f"feature_{feature_idx}"] = wss_feature
             
-            k_values = list(range(1, kmax + 1))
-            for feature, wss in wss_all_features.items():
-                print(f"{feature}: {wss}")
-                plt.plot(k_values, wss, marker='o', label=feature)
+    #         k_values = list(range(1, kmax + 1))
+    #         for feature, wss in wss_all_features.items():
+    #             print(f"{feature}: {wss}")
+    #             plt.plot(k_values, wss, marker='o', label=feature)
             
-            plt.xlabel("Anzahl der Cluster (k)")
-            plt.ylabel("WSS (Within-Cluster Sum of Squares)")
-            plt.title("Elbow Plot pro Feature")
-            plt.legend()
-            plt.grid(True)
-            plt.show()
+    #         plt.xlabel("Anzahl der Cluster (k)")
+    #         plt.ylabel("WSS (Within-Cluster Sum of Squares)")
+    #         plt.title("Elbow Plot pro Feature")
+    #         plt.legend()
+    #         plt.grid(True)
+    #         plt.show()
                 
                 # # Fit the DBSCAN model to the data
                 # dbscan = DBSCAN(eps=0.3, min_samples=5)
