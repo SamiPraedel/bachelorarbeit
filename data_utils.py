@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from sklearn.datasets import load_iris
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, LabelEncoder, OrdinalEncoder
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, LabelEncoder, OrdinalEncoder, OneHotEncoder
 from ucimlrepo import fetch_ucirepo
 import pandas as pd
 from scipy import stats
@@ -229,102 +229,6 @@ def load_K_chess_data(test_size=0.3, random_state=42):
     
     return X_train, y_train, X_test, y_test, X_train_np, X, y
 
-def get_chessK_full():
-    df = loadK()
-    #     # Annahme: Die letzte Spalte ist die Zielvariable
-    #    # Features und Label trennen
-    
-    
-    df.rename(columns={
-        'V1': 'white-king-file',
-        'V2': 'white-rook-file',
-        'V3': 'black-king-file'
-    }, inplace=True)
-    X = df.drop(columns=['Class'])
-    y = df['Class']
-
-    chess_king_rook_vs_king = fetch_ucirepo(id=23) 
-
-    
-    # # data (as pandas dataframes) 
-    X = chess_king_rook_vs_king.data.features 
-    y = chess_king_rook_vs_king.data.targets 
-    
-    encoder = OrdinalEncoder()
-    
-    xWkf = np.array(X['white-king-file']).reshape(-1,1)
-    xWrf = np.array(X['white-rook-file']).reshape(-1,1)
-    xBkf = np.array(X['black-king-file']).reshape(-1,1)
-    
-    
-
-    X.loc[:, 'white-king-file'] = encoder.fit_transform(xWkf)
-    X.loc[:, 'white-rook-file'] = encoder.fit_transform(xWrf)
-    X.loc[:, 'black-king-file'] = encoder.fit_transform(xBkf)
-
-    # Numerische Features skalieren
-    scaler = MinMaxScaler()
-    X_processed = scaler.fit_transform(X)
-    
-    X_processed = X_processed.astype(np.float32)
-
-    # Label kodieren (falls nötig)
-    le = LabelEncoder()
-    #y_encoded = le.fit_transform(y)
-    y_encoded = le.fit_transform(y.values.ravel())
-
-
-    # Convert to numpy
-   
-    # If y_df is a Series, convert to int array
-    #y_np = y_encoded.astype(int)
-
-    return X_processed, y_encoded
-
-def get_iris_full():
-    data = load_iris()
-    X_np = data['data'].astype(np.float32)
-    y_np = data['target'].astype(int)
-
-    # Possibly scale
-    scaler = MinMaxScaler()
-    X_np = scaler.fit_transform(X_np)
-
-    return X_np, y_np
-
-
-
-def get_chessKp_full():
-    chess_king_rook_vs_king_pawn = fetch_ucirepo(id=22)
-    X_df = chess_king_rook_vs_king_pawn.data.features
-    y_df = chess_king_rook_vs_king_pawn.data.targets
-    
-    print(X_df['white-king-file'])
-    
-    
-    encoder = OrdinalEncoder()
-    
-    X_df = encoder.fit_transform(X_df)
-    
-    
-    # Numerische Features skalieren
-    scaler = MinMaxScaler()
-    X_processed = scaler.fit_transform(X_df)
-    X_processed = X_processed.astype(np.float32)
-    
-    le = LabelEncoder()
-    y_encoded = le.fit_transform(y_df)
-    
-    
-    
-    if not (isinstance(y_encoded, np.ndarray)):
-        y_np = y_encoded.to_numpy(dtype=int)
-    else:
-        y_np = y_encoded
-    
-    return X_processed, y_np
-
-
 
 def load_Kp_chess_data(test_size=0.3, random_state=42):
     df = loadKP()
@@ -451,7 +355,7 @@ def load_abalon_data():
     # data (as pandas dataframes) 
     X = abalone.data.features 
     y = abalone.data.targets 
-    print(X.head(10))
+
 
     X["Target Variable"] = y  # "Target Variable" ist der Name für y
     print(X.head(10))
@@ -487,9 +391,47 @@ def load_abalon_data():
     y_train = torch.tensor(y_train_np, dtype=torch.long)
     X_test = torch.tensor(X_test_np, dtype=torch.float32)
     y_test = torch.tensor(y_test_np.values, dtype=torch.long)
-    #print(X_train.shape)
+
+
 
     return X_train, y_train, X_test, y_test, X_train_np
+
+
+def load_abalone_data( test_size = 0.3, random_state = 8):
+
+    abalone = fetch_ucirepo(id=1)
+    X = abalone.data.features.copy()
+    y = abalone.data.targets.squeeze()
+    
+    X_num = X.select_dtypes(exclude='object')
+    X_cat = X.select_dtypes(include='object')
+
+    X_tranf_cat = pd.get_dummies(X_cat)
+    
+    X = pd.concat([X_num, X_tranf_cat], axis=1) 
+    
+    X_processed = X.astype(np.float32)
+    
+    print(torch.bincount(torch.from_numpy(y.values)))
+    
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_processed, y,
+        test_size=test_size, random_state=random_state
+    )
+
+    scaler_cls = MinMaxScaler()
+    fitted_scaler = scaler_cls().fit(X_train)
+    X_train_scaled = fitted_scaler.transform(X_train)
+    X_test_scaled = fitted_scaler.transform(X_test)
+
+    X_train_t = torch.tensor(X_train_scaled, dtype=torch.float32)
+    y_train_t = torch.tensor(y_train.values, dtype=torch.long)
+    X_test_t = torch.tensor(X_test_scaled, dtype=torch.float32)
+    y_test_t = torch.tensor(y_test.values, dtype=torch.long)
+
+    return X_train_t, y_train_t, X_test_t, y_test_t
+
 
 
 
@@ -540,7 +482,8 @@ if __name__ == "__main__":
     # X_train6, y_train, X_test, y_test, s = load_Kp_chess_data()
     #X_train, y_train, X_test, y_test, = load_Poker_data()
     
-    get_chessKp_full()
+    #get_chessKp_full()
+    load_abalone_data()
     
     # if not isinstance(y_train, np.ndarray):
     #     y_train = y_train.cpu().numpy()

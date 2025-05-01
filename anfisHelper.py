@@ -1,0 +1,72 @@
+import numpy as np
+import torch
+from sklearn.cluster import KMeans
+
+
+
+def initialize_mfs_with_kmeans(model, data):
+    """
+    data: NumPy array of shape (num_samples, input_dim).
+        Each column is one feature/dimension.
+
+    Returns:
+    centers: NumPy array of shape (input_dim, num_mfs)
+    widths:  NumPy array of shape (input_dim, num_mfs)
+    """
+    
+    input_dim = data.shape[1]
+    num_mfs = model.num_mfs  # Anzahl der Membership Functions pro Dimension
+
+    centers_list = []
+    widths_list = []
+
+    for i in range(input_dim):
+        # Daten für Dimension i extrahieren:
+        X_dim = data[:, i].reshape(-1, 1)  # Shape: [num_samples, 1]
+
+        # K-Means auf diese Dimension anwenden:
+        km = KMeans(n_clusters=num_mfs, random_state=0, n_init='auto')
+        km.fit(X_dim.cpu())
+
+        # Clusterzentren als 1D-Array extrahieren:
+        centers_i = km.cluster_centers_.flatten()
+        # Berechne die Standardabweichung pro Cluster:
+        stds_i = []
+        labels = km.labels_
+        for c_idx in range(num_mfs):
+            cluster_points = X_dim[labels == c_idx]
+            # Falls der Datentyp nicht bereits ein NumPy-Array ist, umwandeln:
+            if not isinstance(cluster_points, np.ndarray):
+                cluster_points = cluster_points.cpu().numpy()
+            if len(cluster_points) > 1:
+                std_val = np.std(cluster_points)
+            else:
+                std_val = 0.1  # Fallback für einen einzelnen Datenpunkt
+            std_val = max(std_val, 0.1)  # Minimaler positiver Wert
+            stds_i.append(std_val)
+
+        # --- Hier folgt der Code zur Sortierung der Cluster ---
+        # Bündele die Zentren und die stds zu Paaren:
+        pairs = sorted(zip(centers_i, stds_i), key=lambda pair: pair[0])
+        # Entpacke die sortierten Paare:
+        centers_i, stds_i = zip(*pairs)
+        centers_i = np.array(centers_i)
+        stds_i = np.array(stds_i)
+        # --- Ende Sortierung ---
+
+        # Füge die sortierten Werte zur Gesamtliste hinzu:
+        centers_list.append(centers_i)
+        widths_list.append(stds_i)
+
+    # Wandle die Listen in 2D-Arrays um:
+    centers = np.array(centers_list, dtype=np.float32)  # Shape: (input_dim, num_mfs)
+    widths  = np.array(widths_list,  dtype=np.float32)   # Shape: (input_dim, num_mfs)
+    
+    with torch.no_grad():
+        model.centers[:] = torch.tensor(centers, dtype=torch.float32)
+        model.widths[:]  = torch.tensor(widths,  dtype=torch.float32)
+
+    print(f"K-Means-based centers:\n{centers}")
+    print(f"K-Means-based widths:\n{widths}")
+
+    return centers, widths

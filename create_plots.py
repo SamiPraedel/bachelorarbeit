@@ -1,4 +1,3 @@
-
 import umap
 
 def plot_firing_strengths(model, X, cmap='viridis'):
@@ -156,3 +155,61 @@ def plot_TopK(topk_p, firing):
     plt.imshow((firing>0).astype(float), cmap='Greys', aspect='auto')
     plt.title(f"Aktiv‑Maske (K={topk_p})"); plt.xlabel("Regel"); plt.ylabel("Sample")
     plt.show()
+
+def plot_sorted_Fs(preds, firing_strengths):
+    sortedPreds, preds_ind  = torch.sort(preds)
+    
+    #class_boundaries = np.nonzero(np.diff(sortedPreds))[0] + 1
+    
+    diffs = sortedPreds[1:] != sortedPreds[:-1]   # Boolean‑Mask, wo Klassen wechseln
+    boundaries = torch.nonzero(diffs).squeeze() + 1 
+    
+    
+    fig, ax = plt.subplots(figsize=(12, 6))
+        
+    sorted_Fs = firing_strengths[preds_ind.cpu()]
+
+    # 1) Transpose if needed
+    sorted_Fs = sorted_Fs.T  # shape [num_rules, N]
+
+    # 2) Plot
+    im = ax.imshow(sorted_Fs, aspect='auto', cmap='viridis', vmin=0, vmax=0.01)
+
+    # 3) Draw vertical class boundaries in data coords
+    for boundary in boundaries[1:-1]:
+        ax.axvline(boundary - 0.5, color='white', linewidth=0.5)
+    
+    plot_TopK(0.1, sorted_Fs)
+
+    ax.set_xlabel("Testbeispiel Index (sortiert nach Klasse)")
+    ax.set_ylabel("Regel-Index")
+
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("Firing Strength")
+
+    plt.title("Heatmap der Regelfiring Strengths mit Klassengrenzen")
+    plt.show()
+            
+    return
+
+def get_important_rule_per_class_torch(firing_strengths, labels):
+
+
+    unique_classes = torch.unique(labels)
+    important_rules = {}
+    
+    # Für jede Klasse:
+    for cls in unique_classes:
+      
+        indices = (labels == cls).nonzero(as_tuple=True)[0]
+        
+        # Berechne den Mittelwert der Firing Strengths für jede Regel für diese Instanzen:
+        avg_strengths = torch.mean(firing_strengths[indices, :], dim=0)
+        
+        # Finde den Regelindex mit dem höchsten Mittelwert:
+        important_rule_idx = torch.argmax(avg_strengths).item()
+        
+        # Speichere das Ergebnis im Dictionary
+        important_rules[int(cls.item())] = important_rule_idx
+        
+    return important_rules

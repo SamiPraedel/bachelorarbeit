@@ -203,23 +203,56 @@ class FuzzyMMC:
                 count += 1
 
         return count / len(Y)
+
+import matplotlib.pyplot as plt
+
+def plot_hyperboxes(model, X=None, feature_indices=(0,1)):
+    """
+    Plotte die Hyperbox-Regeln von `model` in den beiden
+    Merkmalsdimensionen feature_indices=(i,j).
+    Optional: zeige auch die Datenpunkte X (Shape (N,D)).
+    """
+    i, j = feature_indices
+    fig, ax = plt.subplots()
+    
+    # Datenpunkte plotten (falls übergeben)
+    if X is not None:
+        ax.scatter(X[:, i], X[:, j], s=10, alpha=0.5)
+    
+    # Hyperboxen als Rechtecke zeichnen
+    for (v, w), cls in zip(model.hyperboxes, model.classes):
+        # v = min-Eckpunkt, w = max-Eckpunkt
+        width  = w[i] - v[i]
+        height = w[j] - v[j]
+        rect = plt.Rectangle((v[i], v[j]),
+                             width, height,
+                             fill=False, linewidth=1.5)
+        ax.add_patch(rect)
+        # Klassenlabel an den unteren linken Eckpunkt
+        ax.text(v[i], v[j], str(cls), fontsize=9, verticalalignment='bottom')
+    
+    ax.set_xlabel(f"Feature {i}")
+    ax.set_ylabel(f"Feature {j}")
+    ax.set_title("Hyperbox-Regeln")
+    plt.tight_layout()
+    plt.show()
+
     
     
     
 if __name__ == "__main__":
     
-    #X_train, y_train, X_test, y_test = load_iris_data()
-    X_train, y_train, X_test, y_test = load_K_chess_data_splitted()
-
-    _max = 1
-    _min = 0.1
+    X_train, y_train, X_test, y_test = load_iris_data()
+    #X_train, y_train, X_test, y_test = load_K_chess_data_splitted()
+    X_train, y_train, X_test, y_test, a = load_Kp_chess_data()
     
     X_train = X_train.numpy()
     y_train = y_train.numpy()
     X_test = X_test.numpy()
     y_test = y_test.numpy()
     
-    X_train = (X_train - _min) / (_max - _min)
+    
+   # X_train = (X_train - _min) / (_max - _min)
     
     
 
@@ -228,3 +261,4 @@ if __name__ == "__main__":
     f.score(X_test, y_test)
     print("Trained")
     print(f.score(X_test, y_test))
+    plot_hyperboxes(f, X_train, feature_indices=(0,2))

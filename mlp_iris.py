@@ -1,8 +1,9 @@
-# mlp_network.py
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+from sklearn import metrics
+
+from data_utils import load_iris_data, load_abalon_data
+
 
 class FullyConnected(nn.Module):
     def __init__(self, input_dim, hidden1, hidden2, num_classes):
@@ -19,7 +20,7 @@ class FullyConnected(nn.Module):
         x = self.l3(x)  # => [batch_size, num_classes]
         return x
 
-def fit_mlp(model, X_train, y_train, epochs=150, lr=0.001):
+def fit_mlp(model, X_train, y_train, epochs=300, lr=0.001):
     """
     Einfaches Training für MLP.
     X_train: Tensor [N, input_dim], y_train: Tensor [N]
@@ -34,3 +35,16 @@ def fit_mlp(model, X_train, y_train, epochs=150, lr=0.001):
         loss.backward()
         optimizer.step()
 
+if __name__ == "__main__":
+    #X_train, y_train, X_test, y_test = load_iris_data()
+    X_train, y_train, X_test, y_test,_ = load_abalon_data()
+    number_classes = torch.unique(y_train).size(0)
+    model = FullyConnected(X_train.size(1), 6000, 200, number_classes)
+    fit_mlp(model, X_train, y_train)
+    model.eval()
+    outputs = model(X_test) 
+    preds = torch.argmax(outputs, dim=1)
+    preds_np   = preds.detach().cpu().numpy()
+    y_test_np  = y_test.detach().cpu().numpy()
+    accuracy = metrics.accuracy_score(y_test_np, preds_np) * 100
+    print(accuracy)
