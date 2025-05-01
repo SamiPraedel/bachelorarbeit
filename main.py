@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
+
 from torchmetrics.functional import matthews_corrcoef
 from sklearn.ensemble import RandomForestClassifier
 from sklearn import metrics
@@ -12,6 +12,7 @@ from anfis_nonHyb import NoHybridANFIS
 from trainAnfis import train_anfis_noHyb, train_anfis_hybrid
 from data_utils import load_iris_data, load_heart_data, load_wine_data, load_abalon_data, load_K_chess_data, load_Kp_chess_data, load_K_chess_data_splitted, load_K_chess_data_OneHot, load_Poker_data
 from create_plots import plot_TopK, plot_sorted_Fs, plot_umap_fixed_rule, plot_sample_firing_strengths
+from anfisHelper import weighted_sampler
 
 
 def run_experiment(
@@ -25,16 +26,16 @@ def run_experiment(
 ):
     device = torch.device("mps")
     DATASETS = {
-        "iris":    (load_iris_data,             4,  3),
-        "heart":   (load_heart_data,           13,  5),
-        "wine":    (load_wine_data,            11, 11),
-        "abalone": (load_abalon_data,           8,  3),
-        "ChessK":  (load_K_chess_data_splitted, 6, 18),
-        "ChessKp": (load_Kp_chess_data,        10,  2),
-        "Poker":   (load_Poker_data,           71,  2),
+        "iris":    (load_iris_data,3),
+        "heart":   (load_heart_data,5),
+        "wine":    (load_wine_data,11),
+        "abalone": (load_abalon_data,3),
+        "ChessK":  (load_K_chess_data_splitted,18),
+        "ChessKp": (load_Kp_chess_data,2),
+        "Poker":   (load_Poker_data,2),
     }
     try:
-        loader, input_dim, num_classes = DATASETS[dataset]
+        loader, num_classes = DATASETS[dataset]
     except KeyError:
         raise ValueError(f"Unknown dataset: {dataset!r}")
 
@@ -49,7 +50,7 @@ def run_experiment(
         
         model = HybridANFIS(
             input_dim=X_train.shape[1], 
-            num_classes=y_train.shape[0],
+            num_classes=num_classes,
             num_mfs=num_mfs,
             max_rules=max_rules,
             seed=seed
@@ -57,20 +58,14 @@ def run_experiment(
         model.to(device)
         
         train_anfis_hybrid(model, X_train, y_train, num_epochs=num_epochs, lr=lr)
-
-    elif type == "RandomF":
-        print("RandomF")
-        model = RandomForestClassifier(n_estimators=100)
-        model.fit(X_train,y_train)
     elif type == "noHyb":
-        print("noHyb")
-        X_train_np = X_train.cpu().numpy()
+
         X_train_t = X_train.clone().detach().float()
         y_train_t = torch.tensor(y_train, dtype=torch.long)
         X_val_t   = torch.tensor(X_test,   dtype=torch.float32)
 
         model = NoHybridANFIS(
-            input_dim=input_dim, 
+            input_dim=X_train.shape[1], 
             num_classes=num_classes,
             num_mfs=num_mfs,
             max_rules=max_rules,
@@ -78,26 +73,17 @@ def run_experiment(
             zeroG=False
         )
 
-        # WeightedRandomSampler example
-        class_sample_count = np.array([len(np.where(y_train == t)[0]) 
-                                     for t in np.unique(y_train)])
-        weight_per_class = 1.0 / class_sample_count
-        sample_weights = np.array([weight_per_class[int(label)] for label in y_train])
-        sample_weights = torch.from_numpy(sample_weights).float()
-        sampler = WeightedRandomSampler(sample_weights, len(sample_weights), replacement=True)
-
-        # # DataLoader with sampler
-        train_dataset = TensorDataset(X_train_t, y_train_t)
-        train_loader = DataLoader(train_dataset, batch_size=32, sampler=sampler)
-
-        # # Train
+        train_loader = weighted_sampler(X_train_t, y_train_t, y_train)
         train_anfis_noHyb(model, X_train_t, y_train_t, num_epochs=num_epochs, lr=lr, dataloader=train_loader)
-            
             
         plot_umap_fixed_rule(model, X_val_t, rule_index=10, cmap='viridis')
         plot_sample_firing_strengths(model, X_val_t[1])
+
+    elif type == "RandomF":
+        model = RandomForestClassifier(n_estimators=100)
+        model.fit(X_train,y_train)
     elif type == "neuralNet":
-       model = FullyConnected(input_dim=input_dim, hidden1=30, hidden2=50, num_classes=num_classes)
+       model = FullyConnected(input_dim=X_train.shape[1], hidden1=30, hidden2=50, num_classes=num_classes)
        fit_mlp(model, X_train, y_train)
 
     else:

@@ -1,8 +1,7 @@
 import numpy as np
 import torch
 from sklearn.cluster import KMeans
-
-
+from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 
 def initialize_mfs_with_kmeans(model, data):
     """
@@ -70,3 +69,15 @@ def initialize_mfs_with_kmeans(model, data):
     print(f"K-Means-based widths:\n{widths}")
 
     return centers, widths
+
+def weighted_sampler(X_train_t, y_train_t, y_train):
+    class_sample_count = np.array([len(np.where(y_train == t)[0]) 
+                                    for t in np.unique(y_train)])
+    weight_per_class = 1.0 / class_sample_count
+    sample_weights = np.array([weight_per_class[int(label)] for label in y_train])
+    sample_weights = torch.from_numpy(sample_weights).float()
+    sampler = WeightedRandomSampler(sample_weights, len(sample_weights), replacement=True)
+
+    # DataLoader with sampler
+    train_dataset = TensorDataset(X_train_t, y_train_t)
+    return DataLoader(train_dataset, batch_size=32, sampler=sampler)
