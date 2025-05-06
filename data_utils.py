@@ -49,17 +49,20 @@ def load_Poker_data(test_size=0.3, random_state=42):
     y_test  = torch.tensor(y_test_np, dtype=torch.long)
     
     
-    X_train_short = torch.narrow(X_train, 0, 0, 10000)
-    y_train_short = torch.narrow(y_train, 0, 0, 10000)
-    X_test_short = torch.narrow(X_test, 0, 0, 10000)
-    y_test_short = torch.narrow(y_test, 0, 0, 10000)
+    # X_train = torch.narrow(X_train, 0, 0, 30000)
+    # y_train = torch.narrow(y_train, 0, 0, 30000)
+    X_test = torch.narrow(X_test, 0, 0, 6000)
+    y_test = torch.narrow(y_test, 0, 0, 6000)
     
-    print(X_train_short.shape)
+    print(torch.unique(y_test))
+    print(torch.bincount(y_test))
+    
+    print(y_test.shape)
     
     #print("y_train shape:", y_train.shape)
     
     #return X_train, y_train, X_test, y_test
-    return X_train_short, y_train_short, X_test_short, y_test_short
+    return X_train, y_train, X_test, y_test
 
 def load_K_chess_data_splitted(test_size=0.3, random_state=42):
     df = loadK()
@@ -118,6 +121,8 @@ def load_K_chess_data_splitted(test_size=0.3, random_state=42):
     y_train = torch.tensor(y_train_np, dtype=torch.long)
     X_test  = torch.tensor(X_test_np, dtype=torch.float32)
     y_test  = torch.tensor(y_test_np, dtype=torch.long)
+    
+    print(X_train)
     
     #print("y_train shape:", y_train.shape)
     
@@ -225,6 +230,7 @@ def load_K_chess_data(test_size=0.3, random_state=42):
     X_test  = torch.tensor(X_test_np, dtype=torch.float32)
     y_test  = torch.tensor(y_test_np, dtype=torch.long)
     
+    print(X_train)
     #print("X_train shape:", X_train.shape)
     
     return X_train, y_train, X_test, y_test, X_train_np, X, y
@@ -296,7 +302,7 @@ def load_heart_data(test_size=0.3, random_state=42):
     X_df = heart.data.features
     y_df = heart.data.targets.squeeze()
     print(X_df.head)
-
+    y_df = (y_df > 0).astype(int)
     # => Split
     X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
         X_df, y_df, test_size=test_size, shuffle=True, random_state=random_state
@@ -480,10 +486,10 @@ if __name__ == "__main__":
     #X_train4, y_train, X_test, y_test = load_heart_data()
     # X_train5, y_train, X_test, y_test, s = load_abalon_data()
     # X_train6, y_train, X_test, y_test, s = load_Kp_chess_data()
-    #X_train, y_train, X_test, y_test, = load_Poker_data()
+    X_train, y_train, X_test, y_test, = load_Poker_data()
     
     #get_chessKp_full()
-    load_abalone_data()
+    #load_abalone_data()
     
     # if not isinstance(y_train, np.ndarray):
     #     y_train = y_train.cpu().numpy()

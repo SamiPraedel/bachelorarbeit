@@ -19,9 +19,7 @@ import torch
 
 _EPS = 1e-9
 
-# ---------------------------------------------------------------------------
-# Membership functions
-# ---------------------------------------------------------------------------
+
 
 def _triangular_mf(x: torch.Tensor, a: float, b: float, c: float) -> torch.Tensor:
     """Triangular membership function (a ≤ b ≤ c)."""
@@ -32,10 +30,6 @@ def _gaussian_mf(x: torch.Tensor, mu: float, sigma: float) -> torch.Tensor:
     """Gaussian (bell‑shaped) membership function."""
     return torch.exp(-0.5 * ((x - mu) / (sigma + _EPS)) ** 2)
 
-
-# ---------------------------------------------------------------------------
-# Utility
-# ---------------------------------------------------------------------------
 
 def _fuzzy_entropy(y_memberships: torch.Tensor) -> torch.Tensor:
     """Fuzzy entropy (smaller ⇒ purer)."""
@@ -75,9 +69,7 @@ class FuzzyDecisionTreeTorch:
         else:
             raise ValueError("membership_shape must be 'triangular' or 'gaussian'")
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+
     def fit(self, X: torch.Tensor, y: torch.Tensor):
         if not torch.is_floating_point(X):
             X = X.float()
@@ -111,9 +103,7 @@ class FuzzyDecisionTreeTorch:
             proba[i, node.class_label] = 1.0
         return proba
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
+
     def _best_split(
         self, X: torch.Tensor, y: torch.Tensor
     ) -> Tuple[Optional[int], Optional[List[Tuple[float, ...]]]]:
@@ -197,9 +187,6 @@ class FuzzyDecisionTreeTorch:
         return _FDTNode(feature=feat, mf_params=mf_params, children=children)
 
 
-# ---------------------------------------------------------------------------
-# Quick sanity check (only executed when running the file directly)
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     # toy data: first feature determines class
     X = torch.rand(300, 4)
@@ -211,12 +198,12 @@ if __name__ == "__main__":
     X, y, X_t, y_t,_ = load_Kp_chess_data()
     
 
-    fdt = FuzzyDecisionTreeTorch(max_depth=2, membership_shape="triangular")
+    fdt = FuzzyDecisionTreeTorch(max_depth=20, membership_shape="triangular")
     fdt.fit(X, y)
     acc = (fdt.predict(X_t) == y_t).float().mean().item()
     print(f"Training accuracy (triangular): {acc:.3f}")
 
-    fdt_gauss = FuzzyDecisionTreeTorch(max_depth=1, membership_shape="gaussian")
+    fdt_gauss = FuzzyDecisionTreeTorch(max_depth=3, membership_shape="gaussian")
     fdt_gauss.fit(X, y)
     acc2 = (fdt_gauss.predict(X_t) == y_t).float().mean().item()
     print(f"Training accuracy (gaussian): {acc2:.3f}")

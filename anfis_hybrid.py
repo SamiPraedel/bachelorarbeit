@@ -15,12 +15,16 @@ class HybridANFIS(nn.Module):
         self.input_dim = input_dim
         self.num_classes = num_classes
         self.num_mfs = num_mfs  
-        self.num_rules = num_mfs ** input_dim 
+        self.num_rules = num_mfs ** input_dim
+        self.max_rules = max_rules
         
         self.centers = nn.Parameter(torch.ones(input_dim, num_mfs))
         self.widths = nn.Parameter(torch.ones(input_dim, num_mfs)) 
         
-
+        self.all_rules = torch.cartesian_prod(
+        *[torch.arange(self.num_mfs) for _ in range(self.input_dim)]
+            )     
+        
         if self.num_rules <= max_rules:
             self.rules = torch.cartesian_prod(*[torch.arange(self.num_mfs) for _ in range(self.input_dim)])
         else:
@@ -50,13 +54,21 @@ class HybridANFIS(nn.Module):
         mfs  = torch.exp(-((x_exp - centers) ** 2) /
                             (2 * widths ** 2) + 1e-9)
             
-        mfs.to(device)        
+        mfs = mfs.to(device)        
         rules_expand = self.rule_idx.unsqueeze(0).expand(batch_size, -1, -1)  # [B, d, R]
         rule_mfs = torch.gather(mfs, 2, rules_expand)
 
         
-        firing_strengths = rule_mfs.prod(dim=1)
-        norm_fs = firing_strengths / (firing_strengths.sum(dim=1, keepdim=True) + 1e-9)
+
+        
+        firing_s = rule_mfs.prod(dim=1)
+        
+        
+        
+        #norm_fs = firing_strengths / (firing_strengths.sum(dim=1, keepdim=True) + 1e-9)
+        norm_fs = firing_s / (firing_s.sum(dim=1, keepdim=True) + 1e-9)
+        #print(norm_fs.shape)
+        #print(torch.count_nonzero(norm_fs))
         
         # 1) Bias anfügen – x_ext braucht selbst keine Gradienten
         ones   = x.new_ones(x.size(0), 1)
@@ -98,14 +110,49 @@ class HybridANFIS(nn.Module):
 
         #B = torch.linalg.lstsq(Phi, Y).solution
         
-        Phi_T_Phi = Phi.t() @ Phi
-        Phi_T_Y   = Phi.t() @ Y
-        lam = 1e-3
-        I = torch.eye(Phi_T_Phi.size(0), device=Phi.device)
-        B = torch.linalg.solve(Phi_T_Phi + lam * I, Phi_T_Y)
+        
+        
+        with torch.no_grad():
+            Phi = Phi.cpu()
+            Phi_T_Phi = Phi.t().matmul(Phi)
+            I = torch.eye(Phi_T_Phi.size(0))
+            Y = Y.cpu()
+            Phi_T_Y = Phi.t().matmul(Y)
+
+            lam = 1e-3
+            B = torch.linalg.solve(Phi_T_Phi + lam * I, Phi_T_Y)     # (R*(d+1), C)
+
+            # --- hier fehlt das view! -----------------------------
+            B = B.view(self.num_rules, self.input_dim + 1, self.num_classes)
+
+            # jetzt passt es
+            self.consequents.copy_(B.to(self.consequents.device))
+
 
         # Reshape in die Form der consequent Parameter: [num_rules, input_dim+1, num_classes]
-        self.consequents.data = B.view(self.num_rules, self.input_dim + 1, self.num_classes)
+        #self.consequents.data = B.view(self.num_rules, self.input_dim + 1, self.num_classes)
         
+    @torch.no_grad()
+    def _forward_mf_only(self, x):
+        """
+        Liefert reine Regel‑Firing‑Stärken (vor Normalisierung).
+        x : Tensor [B, input_dim]  (bereits auf dem gleichen Gerät wie die MFs)
+        Rückgabe: Tensor [B, num_rules]
+        """
+        # -- 1. MF‑Grade je Feature & MF --
+        x_exp   = x.unsqueeze(2)                  # [B, d, 1]
+        centers = self.centers.unsqueeze(0)       # [1, d, m]
+        widths  = self.widths.unsqueeze(0)
+        mfs     = torch.exp(-((x_exp - centers) ** 2) /
+                            (2 * widths ** 2) + 1e-9)           # [B, d, m]
+
+        # -- 2. Relevante MF pro Regel herausziehen --
+        rules_expand = self.rule_idx.unsqueeze(0).expand(x.size(0), -1, -1)  # [B, d, R]
+        rule_mfs     = torch.gather(mfs, 2, rules_expand)                    # [B, d, R]
+
+        # -- 3. Firing‑Stärke je Regel (Produkt über Features) --
+        firing = rule_mfs.prod(dim=1)                                        # [B, R]
+        return firing
+
 
 

@@ -77,6 +77,7 @@ class NoHybridANFIS(nn.Module):
         normalized_firing_strengths = firing / (firing.sum(1, keepdim=True)+1e-9)
         
         #normalized_firing_strengths = fiering_strengths / (fiering_strengths.sum(dim=1, keepdim=True) + eps) 
+        #print(normalized_firing_strengths)
 
         x_ext = torch.cat([x, torch.ones(batch_size, 1)], dim=1)  # Add bias term, shape: [batch_size, input_dim + 1]
 
@@ -99,9 +100,9 @@ class NoHybridANFIS(nn.Module):
         mask         : [B, R]   = 0/1 indicator (top‑K selection)
         """
         T, R = router_probs.shape
-        # fraction of *tokens* per rule  f_i
+
         f = mask.float().mean(0)                 # [R]
-        # fraction of *probability mass* per rule P_i
+
         P = router_probs.mean(0)                 # [R]
         lb = alpha * R * (f * P).sum()
         return lb

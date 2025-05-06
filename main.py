@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import argparse
 
 from torchmetrics.functional import matthews_corrcoef
 from sklearn.ensemble import RandomForestClassifier
@@ -24,7 +25,7 @@ def run_experiment(
     seed,
     lr=1e-3
 ):
-    device = torch.device("mps")
+    device = torch.device("cpu")
     DATASETS = {
         "iris":    (load_iris_data,3),
         "heart":   (load_heart_data,5),
@@ -32,7 +33,7 @@ def run_experiment(
         "abalone": (load_abalon_data,3),
         "ChessK":  (load_K_chess_data_splitted,18),
         "ChessKp": (load_Kp_chess_data,2),
-        "Poker":   (load_Poker_data,2),
+        "Poker":   (load_Poker_data,10),
     }
     try:
         loader, num_classes = DATASETS[dataset]
@@ -76,11 +77,11 @@ def run_experiment(
         train_loader = weighted_sampler(X_train_t, y_train_t, y_train)
         train_anfis_noHyb(model, X_train_t, y_train_t, num_epochs=num_epochs, lr=lr, dataloader=train_loader)
             
-        plot_umap_fixed_rule(model, X_val_t, rule_index=10, cmap='viridis')
-        plot_sample_firing_strengths(model, X_val_t[1])
+        #plot_umap_fixed_rule(model, X_val_t, rule_index=10, cmap='viridis')
+        #plot_sample_firing_strengths(model, X_val_t[1])
 
     elif type == "RandomF":
-        model = RandomForestClassifier(n_estimators=100)
+        model = RandomForestClassifier(n_estimators=10)
         model.fit(X_train,y_train)
     elif type == "neuralNet":
        model = FullyConnected(input_dim=X_train.shape[1], hidden1=30, hidden2=50, num_classes=num_classes)
@@ -102,15 +103,14 @@ def run_experiment(
             
             accuracy = metrics.accuracy_score(y_test_np, preds_np) * 100
             print(f"Test Accuracy on {dataset} with {type}: {accuracy:.2f}%")
-            
-            mcc = matthews_corrcoef(preds, y_test,"multiclass",num_classes=int(torch.unique(y_test).numel()))
+                        
+            mcc = matthews_corrcoef(preds, y_test,"multiclass",num_classes=num_classes)
             print("mcc: ", mcc)
             firing_strengths = firing_strengths.detach().cpu().numpy()  # [batch, num_rules]
             
             plot_sorted_Fs(preds, firing_strengths)
             # silhouette_avg = silhouette_score(sorted_Fs.T, sortedPreds)
             # print("Silhouette Score:", silhouette_avg)
-
             
         elif type == "neuralNet":
             outputs = model(X_test)
@@ -125,16 +125,14 @@ def run_experiment(
 
 
 if __name__ == "__main__":
-    import argparse
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--type", choices=["anfis","noHyb","RandomF","neuralNet"], required=True)
-    parser.add_argument("--dataset", choices=["iris","heart","ChessK","abalone"], required=True)
-    parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--dataset", choices=["iris","heart","ChessK", "ChessKp","abalone", "Poker"], required=True)
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--lr", type=float, default=5e-3)
     parser.add_argument("--num_mfs", type=int, default=3)
-    parser.add_argument("--max_rules", type=int, default=10000)
-    parser.add_argument("--seed", type=int, default=47)
+    parser.add_argument("--max_rules", type=int, default=729)
+    parser.add_argument("--seed", type=int, default=45)
     args = parser.parse_args()
 
     run_experiment(
