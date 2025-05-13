@@ -70,7 +70,7 @@ class FuzzyTree:
         if feat is None:                         # Fallback
             return Node(label=int(torch.bincount(y).argmax()))
 
-        # hartes Routing
+        # hartes Rout
         m  = torch.vstack([self._mf_col(X[:, feat], p) for p in params])  # [2, N]
         idx = m.argmax(0)                                                # [N]
 
@@ -117,10 +117,10 @@ class FuzzyTree:
 
 
 if __name__ == "__main__":
-    from data_utils import load_Kp_chess_data
+    from data_utils import load_K_chess_data_splitted
     X = torch.rand(300, 4)
     y = (X[:, 0] > 0.5).long()
-    X, y, X_t, y_t,_ = load_Kp_chess_data()
-    tree = FuzzyTree(max_depth=8, shape="tri").fit(X, y)
+    X, y, X_t, y_t = load_K_chess_data_splitted()
+    tree = FuzzyTree(max_depth=5, shape="tri").fit(X, y)
     acc = (tree.predict(X_t) == y_t).float().mean().item()
     print("Train‑Acc:", acc)

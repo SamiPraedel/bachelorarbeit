@@ -1,63 +1,77 @@
-# fuzzy_mmc_torch.py
+# fmnc_continuous.py
 from __future__ import annotations
 import torch
 from torch import Tensor
-from typing import Tuple, List, Optional
-import matplotlib.pyplot as plt
+from typing import Optional, Literal
 
 
-class FuzzyMMC_Torch:
+
+class FMNC:
+    """Fuzzy-Min-Max-Classifier  –  reine kontinuierliche Features.
+       * Online-Lernen (Simpson 1992)
+       * kompletter Overlap-Test + Kontraktion
+       * θ-Annealing
     """
-    Minimal‑Fuzzy‑Min‑Max‑Classifier in PyTorch.
-    * harte Expansion zweier Hyperbox‑Eckpunkte (min/max)
-    * Overlap‑Kontraktion nur zwischen Klassen
-    * reine Torch‑Operationen  →  .to(device) möglich
-    """
+    # ------------------------------------------------------------
+    def __init__(
+        self,
+        gamma: float        = 0.5,       # Slope γ  (0.2-0.8 üblich)
+        theta0: float       = 1.0,       # Start-θ   (max. Box-Kantenlänge)
+        theta_min: float    = 0.3,
+        theta_decay: float  = 0.95,
+        bound_mode: Literal["sum", "max"] = "max",
+        aggr: Literal["min", "mean"]      = "min",
+        device: str | torch.device = "cpu",
+    ):
+        self.g, self.th = gamma, theta0
+        self.th_min, self.th_decay = theta_min, theta_decay
+        self.bound_mode, self.aggr = bound_mode, aggr
+        self.dev = torch.device(device)
 
-    def __init__(self, sensitivity: float = 1.0, exp_bound: float = 1.0,
-                 device: torch.device | str = "cpu"):
-        self.sens   = sensitivity   # γ in Original‑Literatur
-        self.bound  = exp_bound     # θ  (max. Kantenlänge × #classes)
-        self.device = torch.device(device)
+        self.V: Optional[Tensor] = None   # [B, D]  lower corners
+        self.W: Optional[Tensor] = None   # [B, D]  upper corners
+        self.cls: Optional[Tensor] = None # [B]
 
-        self.boxes:   Optional[Tensor] = None     # Shape [B, 2, D]  (min,max)
-        self.labels:  Optional[Tensor] = None     # Shape [B]
+    # ------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------
+    def _memb(self, x: Tensor) -> Tensor:
+        """Membership jeder Box für x   →  [B]"""
+        a = 1 - self.g * torch.clamp(self.V - x, min=0)   # left
+        b = 1 - self.g * torch.clamp(x - self.W, min=0)   # right
+        m = torch.minimum(a, b)
+        return m.amin(1) if self.aggr == "min" else m.mean(1)
 
+    def _span(self, v_new: Tensor, w_new: Tensor) -> float:
+        side = w_new - v_new
+        return side.sum().item() if self.bound_mode == "sum" else side.max().item()
 
-    def _membership(self, pattern: Tensor) -> Tensor:
-        """pattern: [D]  →  Membership jedes Hyperbox‐Prototyps  [B]"""
-        v, w = self.boxes[:, 0], self.boxes[:, 1]         # [B,D]
-        a = torch.clamp(1 - self.sens * torch.clamp(pattern - w, min=0.0), 0.0)
-        b = torch.clamp(1 - self.sens * torch.clamp(v - pattern, min=0.0), 0.0)
-        return (a + b).sum(1) / (2 * pattern.numel())     # [B]
-    
-    def _contract(self, idx_new: int) -> None:
-        vj, wj = self.boxes[idx_new]                      # [2,D]
-        for k in range(len(self.boxes)):
-            if self.labels[k] == self.labels[idx_new]:
-                continue                                  # gleiche Klasse → ignorieren
-            vk, wk = self.boxes[k]
+    # ------------------------------------------------------------
+    def _add_box(self, x: Tensor, y: int):
+        self.V = x.clone().unsqueeze(0) if self.V is None else torch.cat([self.V, x.unsqueeze(0)])
+        self.W = x.clone().unsqueeze(0) if self.W is None else torch.cat([self.W, x.unsqueeze(0)])
+        lbl    = torch.tensor([y], device=self.dev)
+        self.cls = lbl if self.cls is None else torch.cat([self.cls, lbl])
 
-            # find min Überlap
-            delta = torch.full((vj.size(0),), 1e9, device=self.device)
-            cond1 = (vj < vk) & (vk < wj) & (wj < wk)
-            cond2 = (vk < vj) & (vj < wk) & (wk < wj)
-            cond3 = (vj < vk) & (vk < wk) & (wk < wj)
-            cond4 = (vk < vj) & (vj < wj) & (wj < wk)
+    # ------------------------------------------------------------
+    # Kontraktion (volles Simpson-Schema)
+    # ------------------------------------------------------------
+    def _contract(self, j: int):
+        vj, wj = self.V[j], self.W[j]
+        for k in range(len(self.V)):
+            if self.cls[k] == self.cls[j]:
+                continue
+            vk, wk = self.V[k].clone(), self.W[k].clone()
 
-            # Delta‐Kandidaten
-            delta[cond1] = (wj - vk)[cond1]
-            delta[cond2] = (wk - vj)[cond2]
-            delta[cond3] = torch.minimum(
-                (wj - vk)[cond3], (wk - vj)[cond3])
-            delta[cond4] = torch.minimum(
-                (wk - vj)[cond4], (wj - vk)[cond4])
+            # Überlappung in jeder Dimension?
+            inter_low  = torch.maximum(vj, vk)
+            inter_high = torch.minimum(wj, wk)
+            inter_len  = inter_high - inter_low
+            pos        = inter_len > 0
+            if pos.sum() != 1:               # exakt 1 Dim?
+                continue
+            i = int(pos.nonzero()[0])
 
-            if delta.min() == 1e9:
-                continue  # keine Überlappung
-
-            i = int(delta.argmin())       # min. Überlappung
-            # 4 case
             if   vj[i] < vk[i] < wj[i] < wk[i]:
                 vk[i] = wj[i] = (vk[i] + wj[i]) / 2
             elif vk[i] < vj[i] < wk[i] < wj[i]:
@@ -65,87 +79,87 @@ class FuzzyMMC_Torch:
             elif vj[i] < vk[i] < wk[i] < wj[i]:
                 if (wj[i]-vk[i]) > (wk[i]-vj[i]): vj[i] = wk[i]
                 else:                           wj[i] = vk[i]
-            elif vk[i] < vj[i] < wj[i] < wk[i]:
+            else:  # vk < vj < wj < wk
                 if (wk[i]-vj[i]) > (wj[i]-vk[i]): vk[i] = wj[i]
                 else:                            wk[i] = vj[i]
 
-            # aktualisieren
-            self.boxes[idx_new] = torch.stack([vj, wj])
-            self.boxes[k]       = torch.stack([vk, wk])
+            self.V[k], self.W[k] = vk, wk
+            self.V[j], self.W[j] = vj, wj   # (vj/wj wurden evtl. verändert)
 
+    # ------------------------------------------------------------
+    # Online-Learning eines Samples
+    # ------------------------------------------------------------
+    def _learn_one(self, x: Tensor, y: int):
+        if self.V is None or (self.cls == y).sum() == 0:
+            self._add_box(x, y);  return
 
-    def _train_single(self, x: Tensor, y: int):
-        if self.labels is None or (self.labels == y).sum() == 0:
-            # -> neue Hyperbox
-            box = x.repeat(2, 1)                        # [2,D]  (min=max=x)
-            self.boxes  = torch.cat([self.boxes, box.unsqueeze(0)], dim=0) if self.boxes is not None else box.unsqueeze(0)
-            self.labels = torch.cat([self.labels, torch.tensor([y], device=self.device)]) if self.labels is not None else torch.tensor([y], device=self.device)
-            return
+        m      = self._memb(x)
+        m[self.cls != y] = -1
+        j      = int(m.argmax())
 
-        # sonst: expand
-        mem = self._membership(x)                       # [B]
-        mem[self.labels != y] = -1                      # andere Klassen ignorieren
-        idx = int(mem.argmax())                         # Index Box mit höchster Membership
+        v_new  = torch.minimum(self.V[j], x)
+        w_new  = torch.maximum(self.W[j], x)
 
-        v_old, w_old = self.boxes[idx]
-        v_new = torch.minimum(v_old, x)
-        w_new = torch.maximum(w_old, x)
-
-        if (w_new - v_new).sum() <= self.bound * self.labels.unique().numel():
-            # Expansion zulässig
-            self.boxes[idx] = torch.stack([v_new, w_new])
+        if self._span(v_new, w_new) <= self.th:
+            # expand erlaubt
+            self.V[j], self.W[j] = v_new, w_new
+            self._contract(j)
         else:
-            # neue Box anlegen
-            self.boxes  = torch.cat([self.boxes, x.repeat(2,1).unsqueeze(0)], dim=0)
-            self.labels = torch.cat([self.labels, torch.tensor([y], device=self.device)])
-            idx = len(self.boxes) - 1
+            # neue Box
+            self._add_box(x, y)
 
-        # Kontraktion gegen andere Klassen
-        self._contract(idx)
+    # ------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------
+    def fit(self, X: Tensor, y: Tensor, epochs: int = 3, shuffle: bool = True):
+        X, y = X.to(self.dev), y.to(self.dev)
 
+        for ep in range(epochs):
+            idx = torch.randperm(len(X)) if shuffle else torch.arange(len(X))
+            for i in idx:
+                self._learn_one(X[i], int(y[i]))
 
-    def fit(self, X: Tensor, y: Tensor, epochs: int = 1):
-        X, y = X.to(self.device), y.to(self.device)
-        self.boxes  = None
-        self.labels = None
-        for _ in range(epochs):
-            for xi, yi in zip(X, y):
-                self._train_single(xi, int(yi))
+            self.th = max(self.th * self.th_decay, self.th_min)
+            print(f"epoch {ep+1}/{epochs} – θ={self.th:.3f}  #boxes={len(self.V)}")
 
-    def predict(self, x: Tensor) -> Tuple[float, int]:
-        mem = self._membership(x.to(self.device))
-        best_idx = int(mem.argmax())
-        return float(mem[best_idx]), int(self.labels[best_idx])
+    def predict(self, X: Tensor) -> Tensor:
+        X = X.to(self.dev)
+        out = []
+        for x in X:
+            m = self._memb(x)
+            out.append(int(self.cls[int(m.argmax())]))
+        return torch.tensor(out, device=self.dev)
 
     def score(self, X: Tensor, y: Tensor) -> float:
-        X, y = X.to(self.device), y.to(self.device)
-        correct = sum(self.predict(x)[1] == yi.item() for x, yi in zip(X, y))
-        return correct / len(y)
+        return (self.predict(X) == y.to(self.dev)).float().mean().item()
+    
+    # ------------------  VISUALISIERUNGEN  ----------------------------- #
 
 
-    def plot_boxes(self, X: Optional[Tensor] = None, dims: Tuple[int,int]=(0,1)):
-        import matplotlib.pyplot as plt
-        i, j = dims
-        plt.figure(figsize=(6,5))
-        if X is not None:
-            X_np = X.cpu().numpy()
-            plt.scatter(X_np[:,i], X_np[:,j], s=10, alpha=0.3)
-
-        for (v, w), cls in zip(self.boxes.cpu(), self.labels.cpu()):
-            plt.gca().add_patch(plt.Rectangle((v[i], v[j]),
-                                              w[i]-v[i], w[j]-v[j],
-                                              fill=False))
-            plt.text(v[i], v[j], str(int(cls)))
-        plt.xlabel(f"f{i}")
-        plt.ylabel(f"f{j}")
-        plt.title("Fuzzy MMC Hyperboxes")
-        plt.tight_layout(); plt.show()
 
 
+
+
+# ------------------------------------------------------------
+# DEMO mit King-Rook vs King  (Koordinaten ∈ {0,…,7})
+# ------------------------------------------------------------
 if __name__ == "__main__":
-    from data_utils import load_iris_data, load_abalon_data
-    Xtr, ytr, Xte, yte,_ = load_abalon_data()
-    fmmc = FuzzyMMC_Torch(exp_bound=1.5)
-    fmmc.fit(Xtr, ytr, epochs=300)
-    print("Test‑Acc:", fmmc.score(Xte, yte))
-    fmmc.plot_boxes(Xtr, dims=(0,2))
+    from data_utils import load_K_chess_data_splitted, load_Kp_chess_data
+    Xtr, ytr, Xte, yte = load_K_chess_data_splitted()   # → Tensoren
+    #Xtr, Xte = Xtr / 7.0, Xte / 7.0                     # ordinale Skalierung [0,1]
+    clf = FMNC(
+        gamma        = 0.4,      # weich
+        theta0       = 0.63,     # passt zur Normierung u. max-Mode
+        theta_min    = 0.6,      # nicht unter 0.6 fallen lassen
+        theta_decay  = 0.97,     # gaaanz langsam
+        bound_mode   = "max",
+        aggr         = "mean",   # statt "min"
+    )
+    clf.fit(Xtr, ytr, epochs=1, shuffle=False)
+    print("Test-Acc :", clf.score(Xte, yte))
+    # nach dem Training
+
+
+
+
+

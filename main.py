@@ -81,7 +81,7 @@ def run_experiment(
         #plot_sample_firing_strengths(model, X_val_t[1])
 
     elif type == "RandomF":
-        model = RandomForestClassifier(n_estimators=10)
+        model = RandomForestClassifier(n_estimators=25)
         model.fit(X_train,y_train)
     elif type == "neuralNet":
        model = FullyConnected(input_dim=X_train.shape[1], hidden1=30, hidden2=50, num_classes=num_classes)
@@ -128,10 +128,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--type", choices=["anfis","noHyb","RandomF","neuralNet"], required=True)
     parser.add_argument("--dataset", choices=["iris","heart","ChessK", "ChessKp","abalone", "Poker"], required=True)
-    parser.add_argument("--epochs", type=int, default=50)
-    parser.add_argument("--lr", type=float, default=5e-3)
-    parser.add_argument("--num_mfs", type=int, default=3)
-    parser.add_argument("--max_rules", type=int, default=729)
+    parser.add_argument("--epochs", type=int, default=300)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--num_mfs", type=int, default=2)
+    parser.add_argument("--max_rules", type=int, default=10000)
     parser.add_argument("--seed", type=int, default=45)
     args = parser.parse_args()
 

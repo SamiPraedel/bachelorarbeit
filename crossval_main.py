@@ -42,7 +42,7 @@ tbl = ax.table(
     colLabels=["Model", "ACC µ", "ACC σ", "MCC µ", "MCC σ"],
     loc="center"
 )
-tbl.auto_set_font_size(False)
+tbl.auto_set_font_size(x = False)
 tbl.set_fontsize(9)
 tbl.scale(1, 1.3)
 

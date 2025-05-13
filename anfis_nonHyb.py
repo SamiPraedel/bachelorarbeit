@@ -17,13 +17,13 @@ class NoHybridANFIS(nn.Module):
         self.input_dim = input_dim
         self.num_classes = num_classes
         self.num_mfs = num_mfs
-        self.num_rules = num_mfs ** input_dim  # Total number of rules
+        self.num_rules = num_mfs ** input_dim if num_mfs**input_dim <= max_rules else max_rules
         self.zeroG = zeroG
 
         self.centers = nn.Parameter(torch.ones(input_dim, num_mfs))  # Centers
         self.widths = nn.Parameter(torch.ones(input_dim, num_mfs))  # Widths
 
-        if self.num_rules <= max_rules:
+        if ((num_mfs**input_dim) <= max_rules):
             self.rules = torch.cartesian_prod(*[torch.arange(self.num_mfs) for _ in range(self.input_dim)])
         else:
             self.rules = torch.randint(low=0,
@@ -31,10 +31,18 @@ class NoHybridANFIS(nn.Module):
                     size=(max_rules, self.input_dim))
             self.num_rules = max_rules
 
+            
+
         if zeroG:
             self.consequents = nn.Parameter(torch.rand(self.num_rules, num_classes))
         else:
             self.consequents = nn.Parameter(torch.rand(self.num_rules, input_dim + 1, num_classes))
+            
+        
+        self.fc1 = nn.Linear(self.num_rules, 16)
+        self.act = nn.ReLU()
+        self.fc2 = nn.Linear(16, num_classes)
+
         
 
     def gaussian_mf(self, x, center, width):
@@ -43,16 +51,6 @@ class NoHybridANFIS(nn.Module):
 
     def forward(self, x):
         batch_size = x.size(0)
-        #mfs = []
-        # for i in range(self.input_dim):
-        #     x_i = x[:, i].unsqueeze(1)  # Shape: [batch_size, 1]
-        #     center_i = self.centers[i]  # Shape: [num_mfs]
-        #     width_i = self.widths[i]    # Shape: [num_mfs]
-        #     mf_i = self.gaussian_mf(x_i, center_i, width_i)  # Shape: [batch_size, num_mfs]
-        #     mfs.append(mf_i)
-
-        # mfs = torch.stack(mfs, dim=1)  # Shape: [batch_size, input_dim, num_mfs]
-        
         
         x_exp      = x.unsqueeze(2)                      # [B, d, 1]
         centers    = self.centers.unsqueeze(0)           # [1, d, m]
@@ -63,7 +61,8 @@ class NoHybridANFIS(nn.Module):
         # rules.shape => [num_rules, input_dim]
         rules_idx = self.rules.unsqueeze(0).expand(batch_size, -1, -1).permute(0, 2, 1)
         # rules_idx.shape => [batch_size, input_dim, num_rules]
-
+        
+        
         rule_mfs = torch.gather(mfs, dim=2, index=rules_idx)  #rule_mfs => [batch_size, input_dim, num_rules]
 
         fiering_strengths = torch.prod(rule_mfs, dim=1)  #[batch_size, num_rules]        
@@ -76,11 +75,12 @@ class NoHybridANFIS(nn.Module):
         firing = fiering_strengths * mask
         normalized_firing_strengths = firing / (firing.sum(1, keepdim=True)+1e-9)
         
+        
         #normalized_firing_strengths = fiering_strengths / (fiering_strengths.sum(dim=1, keepdim=True) + eps) 
         #print(normalized_firing_strengths)
 
         x_ext = torch.cat([x, torch.ones(batch_size, 1)], dim=1)  # Add bias term, shape: [batch_size, input_dim + 1]
-
+        
         # Schritt 1: Berechne die Regel-MF-Werte [B, R, C]
         if self.zeroG:
             outputs = self.consequents
@@ -88,7 +88,11 @@ class NoHybridANFIS(nn.Module):
         else:
             rule_mfs = torch.einsum('bi,rjc->brc', x_ext, self.consequents)  # [B, R, C]
             # Schritt 2: Gewichtete Summe der Regel-MF-Werte [B, C]
-            rule_outputs = torch.einsum('br, brc->bc', normalized_firing_strengths, rule_mfs)  # [B, C]        
+            rule_outputs = torch.einsum('br, brc->bc', normalized_firing_strengths, rule_mfs)  # [B, C]  
+            
+
+        # h = self.act(self.fc1(rule_outputs))  # [B, hidden_size]
+        # rule_outputs = self.fc2(h)         
         
         # Shape: [batch_size, num_classes]
         return rule_outputs, normalized_firing_strengths, mask

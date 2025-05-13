@@ -23,6 +23,7 @@ def train_anfis_noHyb(model, X, Y, num_epochs, lr, dataloader):
 
     model.train()
     optimizer = optim.Adam(model.parameters(), lr=lr)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.3)
     criterion = nn.CrossEntropyLoss()
     
     trainset = torch.utils.data.TensorDataset(X, Y)
@@ -45,6 +46,8 @@ def train_anfis_noHyb(model, X, Y, num_epochs, lr, dataloader):
             optimizer.step()
             model.widths.data.clamp_(min=0.2, max=0.8)
             model.centers.data.clamp_(min=0, max=1)
+
+        scheduler.step()
 
         epoch_loss += loss.item()
         avg_loss = epoch_loss / len(dataloader)
@@ -70,21 +73,23 @@ def train_anfis_hybrid(model, X, Y, num_epochs, lr):
     os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '1'
     torch.set_num_threads(os.cpu_count())
     
-    with torch.no_grad():
-        k = min(2000, model.all_rules.size(0))
-        X_sample = X[:5000]                 # zufällige Stichprobe aus den Trainingsdaten
-        fs       = model._forward_mf_only(X_sample)  # [N, R]: Firing-Stärken aller Regeln
-        coverage = fs.sum(0)                        # [R]: Gesamt-Firing pro Regel über alle Samples
-        top_idx  = torch.topk(coverage, k).indices
-        set_rule_subset(model, top_idx)
+    # with torch.no_grad():
+    #     k = min(2000, model.all_rules.size(0))
+    #     X_sample = X[:5000]                 # zufällige Stichprobe aus den Trainingsdaten
+    #     fs       = model._forward_mf_only(X_sample)  # [N, R]: Firing-Stärken aller Regeln
+    #     coverage = fs.sum(0)                        # [R]: Gesamt-Firing pro Regel über alle Samples
+    #     top_idx  = torch.topk(coverage, k).indices
+    #     set_rule_subset(model, top_idx)
         
     
-    freq = Counter(Y.tolist())
-    tot  = len(Y)
-    weights = torch.tensor([tot/freq[c] for c in range(model.num_classes)],
-                        dtype=torch.float32, device=device)
-    criterion = nn.CrossEntropyLoss(weight=weights) # +1%
-
+    # freq = Counter(Y.tolist())
+    # print(freq)
+    # tot  = len(Y)
+    # weights = torch.tensor([tot/freq[c] for c in range(model.num_classes)],
+    #                     dtype=torch.float32, device=device)
+    #criterion = nn.CrossEntropyLoss(weight=weights) # +1%
+    
+    criterion = nn.CrossEntropyLoss()
 
     # Only optimize membership function params with an optimizer
     optimizer = optim.Adam([model.centers, model.widths], lr=1e-2)

@@ -1,113 +1,93 @@
-# dfpt_iris_main.py
-import torch, torch.nn as nn, torch.optim as optim
-from sklearn.datasets import load_iris
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler
-import numpy as np
+# fmnn_minimal.py
+import torch, math
+from torch import Tensor
+from typing import Optional
 
-# ---------- DFPT-Modell ----------------------------------------------------
-class SoftGate(nn.Module):
-    """Ein Gate mit Gauß–ähnlicher MF."""
-    def __init__(self, dim):
-        super().__init__()
-        self.dim = dim
-        self.c   = nn.Parameter(torch.rand(()))        # Zentrum
-        self.s   = nn.Parameter(torch.rand(()))        # Spread (>0)
-    def forward(self, x):
-        # μ_left, μ_right   (2 Werte pro Sample)
-        z = (x[:, self.dim]-self.c)/self.s.abs()
-        mu = torch.sigmoid(-z*4.0)          # smooth step ≈ fuzzy ≤ c
-        return torch.stack((mu, 1-mu), dim=1)  # [B,2]
+class FMNN_Min:
+    def __init__(self, theta: float = 1.0, device="cpu"):
+        self.th = theta; self.dev = torch.device(device)
+        self.V = None  # [B, D]
+        self.W = None  # [B, D]
+        self.C = None  # [B]
+        self.xmin = None; self.xmax = None          # für 0-1-Norm
 
-class DFPT_Node(nn.Module):
-    def __init__(self, depth, max_depth, in_dim, n_class):
-        super().__init__()
-        self.is_leaf = depth==max_depth
-        if self.is_leaf:
-            self.logits = nn.Parameter(torch.zeros(n_class))
-        else:
-            self.dim   = nn.Parameter(torch.randint(0,in_dim,(1,)), requires_grad=False)
-            self.gate  = SoftGate(self.dim.item())
-            self.left  = DFPT_Node(depth+1,max_depth,in_dim,n_class)
-            self.right = DFPT_Node(depth+1,max_depth,in_dim,n_class)
-    def forward(self,x):
-        if self.is_leaf:
-            B = x.size(0)
-            return self.logits.expand(B,-1)
-        mu = self.gate(x)            # [B,2]
-        out_L = self.left(x)
-        out_R = self.right(x)
-        return mu[:,[0]]*out_L + mu[:,[1]]*out_R
+    # ---------- Hilfsfunktionen ----------
+    def _norm(self, X: Tensor, fit=False) -> Tensor:
+        if fit:
+            self.xmin, self.xmax = X.min(0).values, X.max(0).values
+        return (X - self.xmin) / (self.xmax - self.xmin + 1e-12)
 
-class DFPT(nn.Module):
-    def __init__(self, in_dim, n_class, depth=2):
-        super().__init__()
-        self.root = DFPT_Node(0, depth, in_dim, n_class)
-        self.feat = [f"x{i}" for i in range(in_dim)]
-        self.classes = [f"c{i}" for i in range(n_class)]
-    def forward(self,x): return self.root(x)
-    
-def extract_rules(tree, feature_names, class_names, tau=0.1):
-    """
-    Traversiert den DFPT rekursiv und sammelt alle Regeln,
-    deren Pfad-Gewicht >= tau (Schwellwert für Lesbarkeit).
-    """
-    rules = []
+    def _membership(self, x: Tensor) -> Tensor:
+        left  = 1 - torch.clamp(self.V - x, min=0)
+        right = 1 - torch.clamp(x - self.W, min=0)
+        return torch.minimum(left, right).amin(dim=1)          # [B]
 
-    def _recurse(node, path, weight):
-        if node.is_leaf:
-            cls_idx = node.logits.argmax().item()
-            conf    = weight * torch.softmax(node.logits,0)[cls_idx].item()
-            if conf >= tau:
-                rules.append((
-                    " AND ".join(path) if path else "TRUE",
-                    class_names[cls_idx],
-                    conf
-                ))
-            return
-        # linker & rechter Zweig
-        m = node.mf   # (μ_left, μ_right) callables
-        for side,μ in zip(("≤","≥"), m):
-            # verbalisiere MF als Intervall/Zentrum+Breite
-            desc = f"{feature_names[node.dim]} {side} {round(node.c.item(),3)}±{round(node.s.item()/2,3)}"
-            _recurse( node.left if side=="≤" else node.right,
-                      path+[desc],
-                      weight * node.gate_weight(side) )
-    _recurse(tree.root, [], 1.0)
-    return sorted(rules, key=lambda r: -r[2])
+    # ---------- Public API ----------
+    def fit(self, X: Tensor, y: Tensor):
+        X, y = X.to(self.dev), y.to(self.dev)
+        X = self._norm(X, fit=True)
+        for xi, yi in zip(X, y):
+            if self.V is None:             # 1. Box
+                self.V = xi.unsqueeze(0);  self.W = xi.unsqueeze(0)
+                self.C = yi.unsqueeze(0);  continue
+
+            # --- Box derselben Klasse suchen + evtl. expandieren
+            same = (self.C == yi)
+            if same.any():
+                m = self._membership(xi)[same]
+                idx_local = int(m.argmax())
+                idx = same.nonzero(as_tuple=True)[0][idx_local]
+                v_new = torch.minimum(self.V[idx], xi)
+                w_new = torch.maximum(self.W[idx], xi)
+                
+                if (w_new - v_new).max() <= self.th:           # θ-Kriterium
+                    self.V[idx], self.W[idx] = v_new, w_new
+                    self._contract(idx);           continue
+
+            # --- sonst neue Box
+            self.V = torch.cat([self.V, xi.unsqueeze(0)])
+            self.W = torch.cat([self.W, xi.unsqueeze(0)])
+            self.C = torch.cat([self.C, yi.unsqueeze(0)])
+
+    def _contract(self, j: int):
+        for k in range(len(self.V)):
+            if k == j or self.C[k] == self.C[j]: continue
+            # 1-D-Overlap?
+            low  = torch.maximum(self.V[j], self.V[k])
+            high = torch.minimum(self.W[j], self.W[k])
+            inter = (high - low) > 0
+            if inter.sum() == 1:
+                i = int(inter.nonzero())
+                # 4 Fälle
+                vj, wj, vk, wk = self.V[j,i], self.W[j,i], self.V[k,i], self.W[k,i]
+                if   vj < vk < wj < wk: vk = wj = (vk+wj)/2
+                elif vk < vj < wk < wj: vj = wk = (vj+wk)/2
+                elif vj < vk < wk < wj:
+                    if (wj-vk) > (wk-vj): vj = wk
+                    else:                 wj = vk
+                else:  # vk < vj < wj < wk
+                    if (wk-vj) > (wj-vk): vk = wj
+                    else:                 wk = vj
+                self.V[j,i], self.W[j,i] = vj, wj
+                self.V[k,i], self.W[k,i] = vk, wk
+
+    def predict(self, X: Tensor) -> Tensor:
+        X = self._norm(X.to(self.dev))
+        preds = []
+        for xi in X:
+            idx = int(self._membership(xi).argmax())
+            preds.append(int(self.C[idx]))
+        return torch.tensor(preds, device=self.dev)
+
+    def score(self, X: Tensor, y: Tensor) -> float:
+        return (self.predict(X)==y.to(self.dev)).float().mean().item()
 
 
-# ---------- Training -------------------------------------------------------
-def train_dfpt():
-    X,y = load_iris(return_X_y=True)
-    scaler = MinMaxScaler().fit(X); X=scaler.transform(X)
-    Xtr,Xte,ytr,yte = train_test_split(X,y,test_size=0.3,random_state=0,stratify=y)
-    Xtr = torch.tensor(Xtr,dtype=torch.float32)
-    ytr = torch.tensor(ytr)
-    Xte = torch.tensor(Xte,dtype=torch.float32)
-    yte = torch.tensor(yte)
-
-    model = DFPT(in_dim=4, n_class=3, depth=2)
-    opt   = optim.Adam(model.parameters(), lr=0.05)
-    crit  = nn.CrossEntropyLoss()
-
-    for epoch in range(400):
-        opt.zero_grad()
-        loss = crit(model(Xtr), ytr)
-        loss.backward()
-        opt.step()
-        if (epoch+1)%100==0:
-            pred = model(Xte).argmax(1)
-            acc  = (pred==yte).float().mean().item()*100
-            print(f"Epoch {epoch+1}: loss={loss.item():.3f}  acc={acc:.1f}%")
-
-    print("\nRule base ≥0.2 conf.:")
-    rules = extract_rules(model, ["SepLen","SepWid","PetLen","PetWid"],
-                          ["Setosa","Versi","Virginica"], tau=0.2)
-    for cond,cls,conf in rules:
-        print(f"IF {cond}  THEN {cls}  [{conf:.2f}]")
-    return model
-
-# --------------- run -------------------------------------------------------
-if __name__=="__main__":
-    train_dfpt()
+if __name__ == "__main__":
+    from data_utils import load_iris_data, load_heart_data, load_Kp_chess_data       # nimmt NumPy → Torch
+    #Xtr,ytr,Xte,yte = load_iris_data()
+    #Xtr,ytr,Xte,yte = load_heart_data()
+    Xtr,ytr,Xte,yte = load_Kp_chess_data()
+    clf = FMNN_Min(theta=0.5)
+    clf.fit(Xtr,ytr)
+    print("ACC =", clf.score(Xte,yte))       # ~0.93 – 0.96

@@ -122,9 +122,9 @@ def load_K_chess_data_splitted(test_size=0.3, random_state=42):
     X_test  = torch.tensor(X_test_np, dtype=torch.float32)
     y_test  = torch.tensor(y_test_np, dtype=torch.long)
     
-    print(X_train)
+
     
-    #print("y_train shape:", y_train.shape)
+    print("y_train shape:", y_train.shape)
     
     return X_train, y_train, X_test, y_test
 
@@ -295,7 +295,7 @@ def load_Kp_chess_data(test_size=0.3, random_state=42):
     
     print("X_train shape:", X_train.shape)
     
-    return X_train, y_train, X_test, y_test, X_train_np
+    return X_train, y_train, X_test, y_test
 
 def load_heart_data(test_size=0.3, random_state=42):
     heart = fetch_ucirepo(id=45)
@@ -438,6 +438,113 @@ def load_abalone_data( test_size = 0.3, random_state = 8):
 
     return X_train_t, y_train_t, X_test_t, y_test_t
 
+def load_K_chess_data(test_size=0.3, random_state=42):
+    # df = loadK()
+
+    # X = df.drop(columns=['Class'])
+    # y = df['Class']
+    # fetch dataset 
+    chess_king_rook_vs_king = fetch_ucirepo(id=23) 
+
+    
+    # data (as pandas dataframes) 
+    X = chess_king_rook_vs_king.data.features 
+    y = chess_king_rook_vs_king.data.targets 
+    
+    # Numerische und kategoriale Spalten bestimmen
+    numeric_cols = X.select_dtypes(include=['float64', 'int']).columns
+    categorical_cols = X.select_dtypes(include=['object']).columns
+    
+    # Aufteilen in Trainings- und Testdaten
+    X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
+        X, y, test_size=test_size, shuffle=True, random_state=random_state
+    )
+    
+    # Numerische Features skalieren
+    scaler = MinMaxScaler()
+
+    X_train_np = scaler.fit_transform(X_train_np)
+    X_test_np  = scaler.transform(X_test_np)
+    
+
+    
+    # Eventuelle NaN-Werte ersetzen
+    X_train_np = np.nan_to_num(X_train_np, nan=0.0)
+    X_test_np  = np.nan_to_num(X_test_np,  nan=0.0)
+    
+    # Konvertiere in PyTorch-Tensoren
+    X_train = torch.tensor(X_train_np, dtype=torch.float32)
+    y_train = torch.tensor(y_train_np, dtype=torch.long)
+    X_test  = torch.tensor(X_test_np, dtype=torch.float32)
+    y_test  = torch.tensor(y_test_np, dtype=torch.long)
+    
+    print(X_train)
+    #print("X_train shape:", X_train.shape)
+    
+    return X_train, y_train, X_test, y_test, X_train_np, X, y
+
+
+def load_Kp_chess_data(test_size=0.3, random_state=42):
+    df = loadKP()
+    #     # Annahme: Die letzte Spalte ist die Zielvariable
+    #    # Features und Label trennen
+    # X = df.drop(columns=['Class'])
+    # y = df['Class']
+
+    # fetch dataset 
+    chess_king_rook_vs_king_pawn = fetch_ucirepo(id=22) 
+    
+    # data (as pandas dataframes) 
+    X = chess_king_rook_vs_king_pawn.data.features 
+    y = chess_king_rook_vs_king_pawn.data.targets 
+    
+    # Numerische und kategoriale Spalten bestimmen
+    numeric_cols = X.select_dtypes(include=['float64', 'int']).columns
+    categorical_cols = X.select_dtypes(include=['object']).columns
+    
+    # Numerische Features skalieren
+    scaler = MinMaxScaler()
+    if len(numeric_cols) > 0:
+        X_numeric = pd.DataFrame(scaler.fit_transform(X[numeric_cols]),
+                                 columns=numeric_cols,
+                                 index=X.index)
+    else:
+        X_numeric = pd.DataFrame(index=X.index)
+    
+    # Kategoriale Features mittels One-Hot-Encoding umwandeln
+    if len(categorical_cols) > 0:
+        X_categorical = pd.get_dummies(X[categorical_cols])
+    else:
+        X_categorical = pd.DataFrame(index=X.index)
+    
+    # Kombiniere numerische und kategoriale Features
+    X_processed = pd.concat([X_numeric, X_categorical], axis=1)
+    
+    X_processed = X_processed.astype(np.float32)
+
+    # Label kodieren (falls nötig)
+    le = LabelEncoder()
+    y_encoded = le.fit_transform(y)
+    
+    # Aufteilen in Trainings- und Testdaten
+    X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
+        X_processed, y_encoded, test_size=test_size, shuffle=True, random_state=random_state
+    )
+    
+    # Eventuelle NaN-Werte ersetzen
+    X_train_np = np.nan_to_num(X_train_np, nan=0.0)
+    X_test_np  = np.nan_to_num(X_test_np,  nan=0.0)
+    
+    # Konvertiere in PyTorch-Tensoren
+    X_train = torch.tensor(X_train_np, dtype=torch.float32)
+    y_train = torch.tensor(y_train_np, dtype=torch.long)
+    X_test  = torch.tensor(X_test_np, dtype=torch.float32)
+    y_test  = torch.tensor(y_test_np, dtype=torch.long)
+    
+    print("X_train shape:", X_train.shape)
+    
+    return X_train, y_train, X_test, y_test
+
 
 
 
@@ -480,94 +587,9 @@ def show_ChessK():
         
 
 if __name__ == "__main__":
-   # X_train1, y_train, X_test, y_test = load_K_chess_data_splitted()
-    #X_train2, y_train, X_test, y_test = load_K_chess_data_OneHot()
-    #X_train3, y_train, X_test, y_test = load_iris_data()
-    #X_train4, y_train, X_test, y_test = load_heart_data()
-    # X_train5, y_train, X_test, y_test, s = load_abalon_data()
-    # X_train6, y_train, X_test, y_test, s = load_Kp_chess_data()
-    X_train, y_train, X_test, y_test, = load_Poker_data()
+   X_train1, y_train, X_test, y_test = load_K_chess_data_splitted()
+
     
-    #get_chessKp_full()
-    #load_abalone_data()
-    
-    # if not isinstance(y_train, np.ndarray):
-    #     y_train = y_train.cpu().numpy()
-
-    # # Führe UMAP aus, um die Dimensionen von X_train3 zu reduzieren (n_components=2 für 2D)
-    # umap_model = umap.UMAP(n_components=3, random_state=42)
-    # embedding = umap_model.fit_transform(X_train)
-
-    # # Plot: Wir verwenden das Colormap 'Spectral', um unterschiedliche Zielklassen (Targets) farblich zu differenzieren.
-    # plt.figure(figsize=(10, 8))
-    # scatter = plt.scatter(embedding[:, 0], embedding[:, 1], c=y_train, cmap='Spectral', s=50, alpha=0.8)
-    # plt.colorbar(scatter, label="Zielklasse")
-    # plt.title("UMAP-Embedding Trainingsdaten")
-    # plt.xlabel("UMAP Dimension 1")
-    # plt.ylabel("UMAP Dimension 2")
-    # plt.show()
-    # data_list = [X_train1, X_train2, X_train3, X_train4, X_train5, X_train6, X_train7]
-    
-    # from sklearn.cluster import DBSCAN
-    # from scipy.cluster.hierarchy import linkage, dendrogram, fcluster
-    
-    # for X_train in data_list:
-        
-        
-    #     kmax = 8
-    #     # X_train in NumPy umwandeln
-    #     X_train_np = X_train.detach().cpu().numpy()
-    #     n_samples, n_features = X_train_np.shape
-    #     wss_all_features = {}  # Dictionary: key = Feature-Index, value = Liste der WSS für k=1 bis kmax
-
-    #     # Für jedes Feature separat:
-    #     for feature_idx in range(n_features):
-    #         # Daten des aktuellen Features als 2D-Array: (n_samples, 1)
-    #         data = X_train_np[:, feature_idx].reshape(-1, 1)
-    #         wss_feature = []
-    #         # k von 1 bis kmax
-    #         for k in range(1, kmax + 1):
-    #             km = KMeans(n_clusters=k, random_state=0, n_init='auto')
-    #             km.fit(data)
-    #             # km.inertia_ liefert die Summe der quadratischen Abstände (WSS)
-    #             wss_feature.append(km.inertia_)
-    #         wss_all_features[f"feature_{feature_idx}"] = wss_feature
-            
-    #         k_values = list(range(1, kmax + 1))
-    #         for feature, wss in wss_all_features.items():
-    #             print(f"{feature}: {wss}")
-    #             plt.plot(k_values, wss, marker='o', label=feature)
-            
-    #         plt.xlabel("Anzahl der Cluster (k)")
-    #         plt.ylabel("WSS (Within-Cluster Sum of Squares)")
-    #         plt.title("Elbow Plot pro Feature")
-    #         plt.legend()
-    #         plt.grid(True)
-    #         plt.show()
-                
-                # # Fit the DBSCAN model to the data
-                # dbscan = DBSCAN(eps=0.3, min_samples=5)
-                # clusters = dbscan.fit_predict(data.reshape(-1, 1))
-
-                # # Get the cluster assignments for each data point
-                # print("------------")
-                # print(clusters)
-                
-                # # Perform hierarchical clustering
-                # Z = linkage(data, method='ward')
-
-                # # Create a dendrogram
-                # dendrogram(Z)
-
-                # # Determine the clusters by cutting the dendrogram at a threshold
-                # clusters = fcluster(Z, t=1, criterion='distance')
-
-                # # Print the cluster assignments
-                # print(clusters)
-
-                # # Show the dendrogram
-                # plt.show()
-        
     
         
 
