@@ -327,16 +327,16 @@ if __name__ == "__main__":
     #Xtr, ytr, Xte, yte = load_K_chess_data_splitted()
     #Xtr, ytr, Xte, yte = load_iris_data()
     #Xtr, ytr, Xte, yte = load_heart_data()
-    Xtr, ytr, Xte, yte,_ = load_abalon_data()
-    #Xtr, ytr, Xte, yte = load_Kp_chess_data()
+    #Xtr, ytr, Xte, yte,_ = load_abalon_data()
+    Xtr, ytr, Xte, yte = load_Kp_chess_data()
     #Xtr, ytr, Xte, yte = load_Poker_data()
     
     #Xtr, Xte = Xtr/7.0, Xte/7.0     # *geordnete* Normierung!
 
     clf = FuzzyMMC_Torch(
             gamma=1.5, theta_start=.4, theta_decay=.97, theta_min=.3,
-            bound_mode="max", normalize=False, onehot=False)
-    clf.fit(Xtr, ytr, epochs=2)
+            bound_mode="max", normalize=False, onehot=True)
+    clf.fit(Xtr, ytr, epochs=1)
     print("größte Box-Kantenlänge:",
       (clf.boxes[:,1]-clf.boxes[:,0]).max().item())
     print("Test-Acc :", clf.score(Xte, yte))

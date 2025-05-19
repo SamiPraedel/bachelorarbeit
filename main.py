@@ -11,7 +11,7 @@ from anfis_hybrid import HybridANFIS
 from mlp_iris import FullyConnected, fit_mlp
 from anfis_nonHyb import NoHybridANFIS
 from trainAnfis import train_anfis_noHyb, train_anfis_hybrid
-from data_utils import load_iris_data, load_heart_data, load_wine_data, load_abalon_data, load_K_chess_data, load_Kp_chess_data, load_K_chess_data_splitted, load_K_chess_data_OneHot, load_Poker_data
+from data_utils import load_iris_data, load_heart_data, load_wine_data, load_abalon_data, load_Kp_chess_data, load_K_chess_data_splitted, load_K_chess_data_OneHot, load_Poker_data, load_Kp_chess_data_ord
 from create_plots import plot_TopK, plot_sorted_Fs, plot_umap_fixed_rule, plot_sample_firing_strengths
 from anfisHelper import weighted_sampler
 
@@ -128,10 +128,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--type", choices=["anfis","noHyb","RandomF","neuralNet"], required=True)
     parser.add_argument("--dataset", choices=["iris","heart","ChessK", "ChessKp","abalone", "Poker"], required=True)
-    parser.add_argument("--epochs", type=int, default=300)
+    parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--num_mfs", type=int, default=2)
-    parser.add_argument("--max_rules", type=int, default=10000)
+    parser.add_argument("--num_mfs", type=int, default=33)
+    parser.add_argument("--max_rules", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=45)
     args = parser.parse_args()
 

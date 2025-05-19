@@ -57,7 +57,8 @@ def load_Poker_data(test_size=0.3, random_state=42):
     print(torch.unique(y_test))
     print(torch.bincount(y_test))
     
-    print(y_test.shape)
+    print(torch.unique(y_train))
+    print(torch.bincount(y_train))
     
     #print("y_train shape:", y_train.shape)
     
@@ -189,51 +190,6 @@ def load_K_chess_data_OneHot(test_size=0.3, random_state=42):
     #print("y_train shape:", y_train.shape)
     
     return X_train, y_train, X_test, y_test
-
-def load_K_chess_data(test_size=0.3, random_state=42):
-    # df = loadK()
-
-    # X = df.drop(columns=['Class'])
-    # y = df['Class']
-    # fetch dataset 
-    chess_king_rook_vs_king = fetch_ucirepo(id=23) 
-
-    
-    # data (as pandas dataframes) 
-    X = chess_king_rook_vs_king.data.features 
-    y = chess_king_rook_vs_king.data.targets 
-    
-    # Numerische und kategoriale Spalten bestimmen
-    numeric_cols = X.select_dtypes(include=['float64', 'int']).columns
-    categorical_cols = X.select_dtypes(include=['object']).columns
-    
-    # Aufteilen in Trainings- und Testdaten
-    X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
-        X, y, test_size=test_size, shuffle=True, random_state=random_state
-    )
-    
-    # Numerische Features skalieren
-    scaler = MinMaxScaler()
-
-    X_train_np = scaler.fit_transform(X_train_np)
-    X_test_np  = scaler.transform(X_test_np)
-    
-
-    
-    # Eventuelle NaN-Werte ersetzen
-    X_train_np = np.nan_to_num(X_train_np, nan=0.0)
-    X_test_np  = np.nan_to_num(X_test_np,  nan=0.0)
-    
-    # Konvertiere in PyTorch-Tensoren
-    X_train = torch.tensor(X_train_np, dtype=torch.float32)
-    y_train = torch.tensor(y_train_np, dtype=torch.long)
-    X_test  = torch.tensor(X_test_np, dtype=torch.float32)
-    y_test  = torch.tensor(y_test_np, dtype=torch.long)
-    
-    print(X_train)
-    #print("X_train shape:", X_train.shape)
-    
-    return X_train, y_train, X_test, y_test, X_train_np, X, y
 
 
 def load_Kp_chess_data(test_size=0.3, random_state=42):
@@ -386,6 +342,7 @@ def load_abalon_data():
     #scaler = StandardScaler()
     scaler = MinMaxScaler()
     X_scaled = scaler.fit_transform(X)
+    
 
     # Train-Test-Split (stratifiziert)
     X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
@@ -438,89 +395,23 @@ def load_abalone_data( test_size = 0.3, random_state = 8):
 
     return X_train_t, y_train_t, X_test_t, y_test_t
 
-def load_K_chess_data(test_size=0.3, random_state=42):
-    # df = loadK()
 
-    # X = df.drop(columns=['Class'])
-    # y = df['Class']
-    # fetch dataset 
-    chess_king_rook_vs_king = fetch_ucirepo(id=23) 
-
-    
-    # data (as pandas dataframes) 
-    X = chess_king_rook_vs_king.data.features 
-    y = chess_king_rook_vs_king.data.targets 
-    
-    # Numerische und kategoriale Spalten bestimmen
-    numeric_cols = X.select_dtypes(include=['float64', 'int']).columns
-    categorical_cols = X.select_dtypes(include=['object']).columns
-    
-    # Aufteilen in Trainings- und Testdaten
-    X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
-        X, y, test_size=test_size, shuffle=True, random_state=random_state
-    )
-    
-    # Numerische Features skalieren
-    scaler = MinMaxScaler()
-
-    X_train_np = scaler.fit_transform(X_train_np)
-    X_test_np  = scaler.transform(X_test_np)
-    
-
-    
-    # Eventuelle NaN-Werte ersetzen
-    X_train_np = np.nan_to_num(X_train_np, nan=0.0)
-    X_test_np  = np.nan_to_num(X_test_np,  nan=0.0)
-    
-    # Konvertiere in PyTorch-Tensoren
-    X_train = torch.tensor(X_train_np, dtype=torch.float32)
-    y_train = torch.tensor(y_train_np, dtype=torch.long)
-    X_test  = torch.tensor(X_test_np, dtype=torch.float32)
-    y_test  = torch.tensor(y_test_np, dtype=torch.long)
-    
-    print(X_train)
-    #print("X_train shape:", X_train.shape)
-    
-    return X_train, y_train, X_test, y_test, X_train_np, X, y
-
-
-def load_Kp_chess_data(test_size=0.3, random_state=42):
-    df = loadKP()
-    #     # Annahme: Die letzte Spalte ist die Zielvariable
-    #    # Features und Label trennen
-    # X = df.drop(columns=['Class'])
-    # y = df['Class']
-
-    # fetch dataset 
+def load_Kp_chess_data_ord(test_size=0.3, random_state=42):
     chess_king_rook_vs_king_pawn = fetch_ucirepo(id=22) 
     
     # data (as pandas dataframes) 
     X = chess_king_rook_vs_king_pawn.data.features 
     y = chess_king_rook_vs_king_pawn.data.targets 
     
-    # Numerische und kategoriale Spalten bestimmen
-    numeric_cols = X.select_dtypes(include=['float64', 'int']).columns
-    categorical_cols = X.select_dtypes(include=['object']).columns
+    encoder = OrdinalEncoder()
+
+    X = encoder.fit_transform(X)
+
     
     # Numerische Features skalieren
     scaler = MinMaxScaler()
-    if len(numeric_cols) > 0:
-        X_numeric = pd.DataFrame(scaler.fit_transform(X[numeric_cols]),
-                                 columns=numeric_cols,
-                                 index=X.index)
-    else:
-        X_numeric = pd.DataFrame(index=X.index)
-    
-    # Kategoriale Features mittels One-Hot-Encoding umwandeln
-    if len(categorical_cols) > 0:
-        X_categorical = pd.get_dummies(X[categorical_cols])
-    else:
-        X_categorical = pd.DataFrame(index=X.index)
-    
+    X = scaler.fit_transform(X)
     # Kombiniere numerische und kategoriale Features
-    X_processed = pd.concat([X_numeric, X_categorical], axis=1)
-    
-    X_processed = X_processed.astype(np.float32)
 
     # Label kodieren (falls nötig)
     le = LabelEncoder()
@@ -528,7 +419,7 @@ def load_Kp_chess_data(test_size=0.3, random_state=42):
     
     # Aufteilen in Trainings- und Testdaten
     X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
-        X_processed, y_encoded, test_size=test_size, shuffle=True, random_state=random_state
+        X, y_encoded, test_size=test_size, shuffle=True, random_state=random_state
     )
     
     # Eventuelle NaN-Werte ersetzen
@@ -542,8 +433,11 @@ def load_Kp_chess_data(test_size=0.3, random_state=42):
     y_test  = torch.tensor(y_test_np, dtype=torch.long)
     
     print("X_train shape:", X_train.shape)
+    print(X_train)
     
     return X_train, y_train, X_test, y_test
+
+
 
 
 
@@ -572,22 +466,11 @@ def load_iris_data(test_size=0.2, random_state=42):
     y_test  = torch.tensor(y_test_np,  dtype=torch.long)
 
     return X_train, y_train, X_test, y_test
-
-
-def show_ChessK():
-    output_dir = 'plots'
-    chess_king_rook_vs_king = fetch_ucirepo(id=23)  
-    X = chess_king_rook_vs_king.data.features 
-    y = chess_king_rook_vs_king.data.targets 
-
-    for col in X.features:
-        plt.figure(figsize=(8,6))
-        #for cls in y.unice()
         
         
 
 if __name__ == "__main__":
-   X_train1, y_train, X_test, y_test = load_K_chess_data_splitted()
+   X_train1, y_train, X_test, y_test = load_Kp_chess_data_ord()
 
     
     

@@ -14,7 +14,7 @@ from anfisHelper import initialize_mfs_with_kmeans, initialize_mfs_with_fcm, set
 
 @profile
 def train_anfis_noHyb(model, X, Y, num_epochs, lr, dataloader):
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     
     initialize_mfs_with_kmeans(model, X)  # X_train as np array
@@ -59,7 +59,7 @@ def train_anfis_noHyb(model, X, Y, num_epochs, lr, dataloader):
 
 @profile
 def train_anfis_hybrid(model, X, Y, num_epochs, lr):
-    device = torch.device("cpu")  
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  
     model.to(device)
     
     initialize_mfs_with_kmeans(model, X)
@@ -96,7 +96,7 @@ def train_anfis_hybrid(model, X, Y, num_epochs, lr):
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.3)
 
     trainset = torch.utils.data.TensorDataset(X, Y)
-    dataloader = DataLoader(trainset, batch_size=1024, num_workers=0, shuffle=True)
+    dataloader = DataLoader(trainset, batch_size=1024, num_workers=4, shuffle=True)
     N, P = X.shape
     k = int(N * 1)
     
@@ -131,6 +131,6 @@ def train_anfis_hybrid(model, X, Y, num_epochs, lr):
         avg_loss = epoch_loss / len(dataloader)
         losses.append(avg_loss)
 
-        if (epoch) % 10 == 0:
+        if (epoch) % 1 == 0:
             print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.6f}")
             

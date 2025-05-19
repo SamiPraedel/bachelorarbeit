@@ -57,6 +57,8 @@ class NoHybridANFIS(nn.Module):
         widths     = self.widths.unsqueeze(0)            # [1, d, m]
         mfs  = torch.exp(-((x_exp - centers) ** 2) /
                             (2 * widths ** 2) + 1e-9)
+        
+
             
         # rules.shape => [num_rules, input_dim]
         rules_idx = self.rules.unsqueeze(0).expand(batch_size, -1, -1).permute(0, 2, 1)

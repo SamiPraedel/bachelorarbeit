@@ -21,9 +21,6 @@ class HybridANFIS(nn.Module):
         self.centers = nn.Parameter(torch.ones(input_dim, num_mfs))
         self.widths = nn.Parameter(torch.ones(input_dim, num_mfs)) 
         
-        self.all_rules = torch.cartesian_prod(
-        *[torch.arange(self.num_mfs) for _ in range(self.input_dim)]
-            )     
         
         if self.num_rules <= max_rules:
             self.rules = torch.cartesian_prod(*[torch.arange(self.num_mfs) for _ in range(self.input_dim)])
@@ -109,18 +106,23 @@ class HybridANFIS(nn.Module):
         Phi = Phi.view(batch_size, self.num_rules * (self.input_dim + 1))  # Flattened design matrix
 
         #B = torch.linalg.lstsq(Phi, Y).solution
-        
+        print("Phi shape:", Phi.shape)
         
         
         with torch.no_grad():
             Phi = Phi.cpu()
+            print("Phi shape on cpu:", Phi.shape)
             Phi_T_Phi = Phi.t().matmul(Phi)
+            print("Phi_T_Phi shape:", Phi_T_Phi.shape)
             I = torch.eye(Phi_T_Phi.size(0))
+            print("I shape:", I.shape)
             Y = Y.cpu()
             Phi_T_Y = Phi.t().matmul(Y)
+            print("Phi_T_Y shape:", Phi_T_Y.shape)
 
             lam = 1e-3
             B = torch.linalg.solve(Phi_T_Phi + lam * I, Phi_T_Y)     # (R*(d+1), C)
+            print("B shape:", B.shape)
 
             # --- hier fehlt das view! -----------------------------
             B = B.view(self.num_rules, self.input_dim + 1, self.num_classes)

@@ -58,6 +58,7 @@ class FMNC:
     # ------------------------------------------------------------
     def _contract(self, j: int):
         vj, wj = self.V[j], self.W[j]
+        #print(vj.shape, wj.shape)
         for k in range(len(self.V)):
             if self.cls[k] == self.cls[j]:
                 continue
@@ -68,9 +69,11 @@ class FMNC:
             inter_high = torch.minimum(wj, wk)
             inter_len  = inter_high - inter_low
             pos        = inter_len > 0
-            if pos.sum() != 1:               # exakt 1 Dim?
+            if pos.sum() < 1:               # exakt 1 Dim?
+                #print("no overlap")
                 continue
             i = int(pos.nonzero()[0])
+            print("i:", i)
 
             if   vj[i] < vk[i] < wj[i] < wk[i]:
                 vk[i] = wj[i] = (vk[i] + wj[i]) / 2
@@ -144,18 +147,21 @@ class FMNC:
 # DEMO mit King-Rook vs King  (Koordinaten ∈ {0,…,7})
 # ------------------------------------------------------------
 if __name__ == "__main__":
-    from data_utils import load_K_chess_data_splitted, load_Kp_chess_data
-    Xtr, ytr, Xte, yte = load_K_chess_data_splitted()   # → Tensoren
+    from data_utils import load_K_chess_data_splitted, load_Kp_chess_data, load_Kp_chess_data_ord
+    #Xtr, ytr, Xte, yte = load_K_chess_data_splitted()   # → Tensoren
+    Xtr, ytr, Xte, yte = load_Kp_chess_data_ord()   # → Tensoren
+    print(yte.shape)
     #Xtr, Xte = Xtr / 7.0, Xte / 7.0                     # ordinale Skalierung [0,1]
+    print(Xtr.shape)
     clf = FMNC(
-        gamma        = 0.4,      # weich
-        theta0       = 0.63,     # passt zur Normierung u. max-Mode
+        gamma        = 0.2,      # weich
+        theta0       = 1,     # passt zur Normierung u. max-Mode
         theta_min    = 0.6,      # nicht unter 0.6 fallen lassen
         theta_decay  = 0.97,     # gaaanz langsam
-        bound_mode   = "max",
-        aggr         = "mean",   # statt "min"
+        bound_mode   = "sum",
+        aggr         = "min",   # statt "min"
     )
-    clf.fit(Xtr, ytr, epochs=1, shuffle=False)
+    clf.fit(Xtr, ytr, epochs=1, shuffle=True)
     print("Test-Acc :", clf.score(Xte, yte))
     # nach dem Training
 
