@@ -12,21 +12,22 @@ class HybridANFIS(nn.Module):
         
         super(HybridANFIS, self).__init__()
         
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
         self.input_dim = input_dim
         self.num_classes = num_classes
-        self.num_mfs = num_mfs  
+        self.M = num_mfs  
         self.num_rules = num_mfs ** input_dim
         self.max_rules = max_rules
         
-        self.centers = nn.Parameter(torch.ones(input_dim, num_mfs))
-        self.widths = nn.Parameter(torch.ones(input_dim, num_mfs)) 
-        
+        self.centers = nn.Parameter(torch.ones(input_dim, num_mfs), requires_grad=True)
+        self.widths = nn.Parameter(torch.ones(input_dim, num_mfs), requires_grad=True)  
         
         if self.num_rules <= max_rules:
-            self.rules = torch.cartesian_prod(*[torch.arange(self.num_mfs) for _ in range(self.input_dim)])
+            self.rules = torch.cartesian_prod(*[torch.arange(self.M) for _ in range(self.input_dim)])
         else:
             self.rules = torch.randint(low=0,
-                    high=self.num_mfs,
+                    high=self.M,
                     size=(max_rules, self.input_dim))
             self.num_rules = max_rules
   
@@ -42,7 +43,7 @@ class HybridANFIS(nn.Module):
 
     
     def forward(self, x):
-        device = x.device
+        #device = x.device
         batch_size = x.size(0)
 
         x_exp      = x.unsqueeze(2)                      # [B, d, 1]
@@ -51,7 +52,7 @@ class HybridANFIS(nn.Module):
         mfs  = torch.exp(-((x_exp - centers) ** 2) /
                             (2 * widths ** 2) + 1e-9)
             
-        mfs = mfs.to(device)        
+        #mfs = mfs.to(device)        
         rules_expand = self.rule_idx.unsqueeze(0).expand(batch_size, -1, -1)  # [B, d, R]
         rule_mfs = torch.gather(mfs, 2, rules_expand)
 
@@ -64,6 +65,7 @@ class HybridANFIS(nn.Module):
         
         #norm_fs = firing_strengths / (firing_strengths.sum(dim=1, keepdim=True) + 1e-9)
         norm_fs = firing_s / (firing_s.sum(dim=1, keepdim=True) + 1e-9)
+        #norm_fs = firing_s
         #print(norm_fs.shape)
         #print(torch.count_nonzero(norm_fs))
         
@@ -98,6 +100,7 @@ class HybridANFIS(nn.Module):
         :param x_ext: Extended inputs (with bias), shape: [batch_size, input_dim + 1]
         :param y: Target outputs (one-hot encoded), shape: [batch_size, num_classes]
         """
+        
 
         batch_size = normalized_firing_strengths.size(0)
 
@@ -105,18 +108,15 @@ class HybridANFIS(nn.Module):
 
         Phi = Phi.view(batch_size, self.num_rules * (self.input_dim + 1))  # Flattened design matrix
 
-        #B = torch.linalg.lstsq(Phi, Y).solution
-        print("Phi shape:", Phi.shape)
+        B = torch.linalg.lstsq(Phi, Y).solution
+        
         
         
         with torch.no_grad():
-            Phi = Phi.cpu()
-            print("Phi shape on cpu:", Phi.shape)
+            #Phi = Phi.cpu()
             Phi_T_Phi = Phi.t().matmul(Phi)
-            print("Phi_T_Phi shape:", Phi_T_Phi.shape)
-            I = torch.eye(Phi_T_Phi.size(0))
-            print("I shape:", I.shape)
-            Y = Y.cpu()
+            I = torch.eye(Phi_T_Phi.size(0)).to(Phi.device)  # Identity matrix
+            #Y = Y.cpu()
             Phi_T_Y = Phi.t().matmul(Y)
             print("Phi_T_Y shape:", Phi_T_Y.shape)
 

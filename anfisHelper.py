@@ -16,7 +16,7 @@ def initialize_mfs_with_kmeans(model, data):
     """
     
     input_dim = data.shape[1]
-    num_mfs = model.num_mfs  # Anzahl der Membership Functions pro Dimension
+    num_mfs = model.M  # Anzahl der Membership Functions pro Dimension
 
     centers_list = []
     widths_list = []
@@ -58,10 +58,11 @@ def initialize_mfs_with_kmeans(model, data):
 
     centers = np.array(centers_list, dtype=np.float32)  # Shape: (input_dim, num_mfs)
     widths  = np.array(widths_list,  dtype=np.float32)   # Shape: (input_dim, num_mfs)
-    
+    dev = data.device
+    print(f"Device: {dev}")
     with torch.no_grad():
-        model.centers[:] = torch.tensor(centers, dtype=torch.float32)
-        model.widths[:]  = torch.tensor(widths,  dtype=torch.float32)
+        model.centers.data.copy_(torch.tensor(centers, device=dev))
+        model.widths .data.copy_(torch.tensor(widths,  device=dev))
 
     print(f"K-Means-based centers:\n{centers}")
     print(f"K-Means-based widths:\n{widths}")

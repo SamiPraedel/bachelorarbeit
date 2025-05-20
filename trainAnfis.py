@@ -115,12 +115,14 @@ def train_anfis_hybrid(model, X, Y, num_epochs, lr):
                     Y_onehot
                 )
         for batch_X, batch_Y in dataloader:
+            batch_X = batch_X.to(device, non_blocking=True)
+            batch_Y = batch_Y.to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
             outputs, firing_strengths, x_ext = model(batch_X)
             loss = criterion(outputs, batch_Y)         
             loss.backward()
             optimizer.step()
-            scaler.update()
+
             model.widths.data.clamp_(min=0.2, max=0.8)
             model.centers.data.clamp_(min=0, max=1)
             

@@ -14,6 +14,9 @@ from trainAnfis import train_anfis_noHyb, train_anfis_hybrid
 from data_utils import load_iris_data, load_heart_data, load_wine_data, load_abalon_data, load_Kp_chess_data, load_K_chess_data_splitted, load_K_chess_data_OneHot, load_Poker_data, load_Kp_chess_data_ord
 from create_plots import plot_TopK, plot_sorted_Fs, plot_umap_fixed_rule, plot_sample_firing_strengths
 from anfisHelper import weighted_sampler
+# for training on cuda
+import torch.multiprocessing as mp
+mp.set_start_method('spawn', force=True)
 
 
 def run_experiment(
@@ -25,14 +28,15 @@ def run_experiment(
     seed,
     lr=1e-3
 ):
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
     DATASETS = {
         "iris":    (load_iris_data,3),
         "heart":   (load_heart_data,5),
         "wine":    (load_wine_data,11),
         "abalone": (load_abalon_data,3),
         "ChessK":  (load_K_chess_data_splitted,18),
-        "ChessKp": (load_Kp_chess_data,2),
+        "ChessKp": (load_Kp_chess_data_ord,2),
         "Poker":   (load_Poker_data,10),
     }
     try:
@@ -43,7 +47,7 @@ def run_experiment(
     X_train, y_train, X_test, y_test, *rest = loader()
 
     if type == "anfis":
-        X_train_np = X_train.cpu().numpy()
+        X_train_np = X_train.numpy()
         X_train  = X_train.to(device)
         y_train  = y_train.to(device)
         X_test   = X_test.to(device)
@@ -72,7 +76,7 @@ def run_experiment(
             max_rules=max_rules,
             seed=seed,
             zeroG=False
-        )
+        ).to(device)
 
         train_loader = weighted_sampler(X_train_t, y_train_t, y_train)
         train_anfis_noHyb(model, X_train_t, y_train_t, num_epochs=num_epochs, lr=lr, dataloader=train_loader)

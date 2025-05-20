@@ -182,6 +182,8 @@ class FuzzyMMC_Torch:
             for i in idx:
                 self._train_one(X[i], int(y[i]))
             self.th = max(self.th*self.decay, self.th_min)
+            
+            
             print(f"epoch {ep+1}/{epochs} – θ={self.th:.3f}  #boxes={len(self.boxes)}")
             print("Test-Acc :", clf.score(Xte, yte))
             print("größte Box-Kantenlänge:", (clf.boxes[:,1]-clf.boxes[:,0]).max().item())
@@ -321,7 +323,7 @@ class FuzzyMMC_Torch:
 
 # playground.py
 import torch
-from data_utils import load_K_chess_data_splitted, load_iris_data, load_Kp_chess_data, load_heart_data, load_abalon_data, load_Poker_data
+from data_utils import load_K_chess_data_splitted, load_iris_data, load_Kp_chess_data, load_heart_data, load_abalon_data, load_Poker_data, load_Kp_chess_data_ord
 # Xtr: 6-D float (0…7)  -> /7   |   ytr: 0…17
 if __name__ == "__main__":
     #Xtr, ytr, Xte, yte = load_K_chess_data_splitted()
@@ -330,6 +332,7 @@ if __name__ == "__main__":
     #Xtr, ytr, Xte, yte,_ = load_abalon_data()
     Xtr, ytr, Xte, yte = load_Kp_chess_data()
     #Xtr, ytr, Xte, yte = load_Poker_data()
+    
     
     #Xtr, Xte = Xtr/7.0, Xte/7.0     # *geordnete* Normierung!
 
