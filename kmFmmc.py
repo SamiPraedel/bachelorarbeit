@@ -189,7 +189,7 @@ if __name__ == "__main__":
         gamma      = 1.7, 
         theta0     = 2.5,
         theta_min  = 0.1,
-        theta_decay= 0.9,
+        theta_decay= 0.1,
         bound_mode = "sum",
         aggr       = "mean",
         m_min     = 0.8,
