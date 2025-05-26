@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import os
 import seaborn as sns
 from sklearn.cluster import KMeans
-import umap
+import umap.umap_ as umap
 
 def load_Poker_data(test_size=0.3, random_state=42):
     # fetch dataset 
@@ -120,16 +120,11 @@ def load_K_chess_data_splitted(test_size=0.3, random_state=42):
 
 
 def load_K_chess_data_OneHot(test_size=0.3, random_state=42):
-    # df = loadK()
-    #     # Annahme: Die letzte Spalte ist die Zielvariable
-    #    # Features und Label trennen
-    # X = df.drop(columns=['Class'])
-    # y = df['Class']
     
     chess_king_rook_vs_king = fetch_ucirepo(id=23) 
 
     
-    # # data (as pandas dataframes) 
+
     X = chess_king_rook_vs_king.data.features 
     y = chess_king_rook_vs_king.data.targets 
     
