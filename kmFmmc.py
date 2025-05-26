@@ -3,6 +3,7 @@ from __future__ import annotations
 import torch, numpy as np
 from torch import Tensor
 from typing import Optional, Literal
+from sklearn.metrics import matthews_corrcoef
 
 
 class FMNC:
@@ -163,6 +164,7 @@ class FMNC:
                         self._add_box(x_i, y_i)
             
 
+
             print(f"epoch {ep+1}/{epochs} – θ={self.th:.3f}  #boxes={len(self.V)}")
             self.th = max(self.th * self.th_decay, self.th_min)
 
@@ -175,6 +177,20 @@ class FMNC:
 
     def score(self, X: Tensor, y: Tensor) -> float:
         return (self.predict(X) == y.to(self.dev)).float().mean().item()
+
+    @torch.no_grad()
+    def mcc_score(self, X: Tensor, y_true: Tensor) -> float:
+        """Calculates the Matthews Correlation Coefficient for the given data."""
+        X = X.to(self.dev)
+        y_true_cpu = y_true.cpu().numpy() # Ensure y_true is on CPU for sklearn
+
+        # self.predict will raise a TypeError if self.cls is None (untrained model)
+        y_pred = self.predict(X)
+        y_pred_cpu = y_pred.cpu().numpy()
+
+        # sklearn's matthews_corrcoef handles cases where MCC is undefined by returning 0.0
+        mcc = matthews_corrcoef(y_true_cpu, y_pred_cpu)
+        return float(mcc)
 
 # ---------------------------------------------------------------
 if __name__ == "__main__":
@@ -199,7 +215,8 @@ if __name__ == "__main__":
     clf.seed_boxes_kmeans(Xtr, ytr, k=3)   # 3 Start-Boxen je Klasse
 
     # ----------- Online-Finetuning -------------------------------
-    clf.fit(Xtr, ytr, epochs=4, shuffle=True)
+    clf.fit(Xtr, ytr, epochs=1, shuffle=True)
 
+    print("Test-MCC:", clf.mcc_score(Xte, yte))
     print("Test-Acc:", clf.score(Xte, yte))
     print("#Boxes :", len(clf.V))

@@ -118,11 +118,11 @@ class HybridANFIS(nn.Module):
             I = torch.eye(Phi_T_Phi.size(0)).to(Phi.device)  # Identity matrix
             #Y = Y.cpu()
             Phi_T_Y = Phi.t().matmul(Y)
-            print("Phi_T_Y shape:", Phi_T_Y.shape)
+            #print("Phi_T_Y shape:", Phi_T_Y.shape)
 
             lam = 1e-3
             B = torch.linalg.solve(Phi_T_Phi + lam * I, Phi_T_Y)     # (R*(d+1), C)
-            print("B shape:", B.shape)
+            #print("B shape:", B.shape)
 
             # --- hier fehlt das view! -----------------------------
             B = B.view(self.num_rules, self.input_dim + 1, self.num_classes)

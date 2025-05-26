@@ -54,11 +54,11 @@ def load_Poker_data(test_size=0.3, random_state=42):
     X_test = torch.narrow(X_test, 0, 0, 6000)
     y_test = torch.narrow(y_test, 0, 0, 6000)
     
-    print(torch.unique(y_test))
-    print(torch.bincount(y_test))
+    #print(torch.unique(y_test))
+    #print(torch.bincount(y_test))
     
-    print(torch.unique(y_train))
-    print(torch.bincount(y_train))
+    #print(torch.unique(y_train))
+    #print(torch.bincount(y_train))
     
     #print("y_train shape:", y_train.shape)
     
@@ -114,7 +114,7 @@ def load_K_chess_data_splitted(test_size=0.3, random_state=42):
     
 
     
-    print("y_train shape:", y_train.shape)
+    #print("y_train shape:", y_train.shape)
     
     return X_train, y_train, X_test, y_test
 
@@ -227,7 +227,7 @@ def load_Kp_chess_data(test_size=0.3, random_state=42):
     X_test  = torch.tensor(X_test_np, dtype=torch.float32)
     y_test  = torch.tensor(y_test_np, dtype=torch.long)
     
-    print("X_train shape:", X_train.shape)
+    #print("X_train shape:", X_train.shape)
     
     return X_train, y_train, X_test, y_test
 
@@ -298,11 +298,11 @@ def load_abalon_data():
 
 
     X["Target Variable"] = y  # "Target Variable" ist der Name für y
-    print(X.head(10))
+    #print(X.head(10))
     encodings = X.groupby('Sex')['Target Variable'].mean().reset_index()
     encoding_mapping = encodings.set_index('Sex')['Target Variable'].to_dict()
     X['Sex_target_encoded'] = X['Sex'].map(encoding_mapping)
-    print(X.head(10))
+    #print(X.head(10))
 
     X["AgeGroup"] = pd.cut(X["Target Variable"], bins=[0, 8, 11, np.inf], labels=[0, 1, 2])
     X["AgeGroup"] = X["AgeGroup"].astype(int)
@@ -312,8 +312,8 @@ def load_abalon_data():
     X = X.drop('Sex', axis=1)
     X = X.drop('Target Variable', axis=1)
     X = X.drop('AgeGroup', axis = 1)
-    print(X.head(10))
-    print(y.head(10))
+    #print(X.head(10))
+    #print(y.head(10))
     
 
     # Normalisieren
@@ -410,8 +410,8 @@ def load_Kp_chess_data_ord(test_size=0.3, random_state=42):
     X_test  = torch.tensor(X_test_np, dtype=torch.float32)
     y_test  = torch.tensor(y_test_np, dtype=torch.long)
     
-    print("X_train shape:", X_train.shape)
-    print(X_train)
+    #print("X_train shape:", X_train.shape)
+    #print(X_train)
     
     return X_train, y_train, X_test, y_test
 

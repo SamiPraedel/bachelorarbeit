@@ -64,8 +64,10 @@ class NoHybridANFIS(nn.Module):
         rules_idx = self.rules.unsqueeze(0).expand(batch_size, -1, -1).permute(0, 2, 1)
         # rules_idx.shape => [batch_size, input_dim, num_rules]
         
-        
-        rule_mfs = torch.gather(mfs, dim=2, index=rules_idx)  #rule_mfs => [batch_size, input_dim, num_rules]
+        rules_idx_on_device = rules_idx.to(mfs.device)
+        rule_mfs = torch.gather(mfs, dim=2, index=rules_idx_on_device)  #rule_mfs => [batch_size, input_dim, num_rules]
+
+        #rule_mfs = torch.gather(mfs, dim=2, index=rules_idx)  #rule_mfs => [batch_size, input_dim, num_rules]
 
         fiering_strengths = torch.prod(rule_mfs, dim=1)  #[batch_size, num_rules]        
         
@@ -81,7 +83,8 @@ class NoHybridANFIS(nn.Module):
         #normalized_firing_strengths = fiering_strengths / (fiering_strengths.sum(dim=1, keepdim=True) + eps) 
         #print(normalized_firing_strengths)
 
-        x_ext = torch.cat([x, torch.ones(batch_size, 1)], dim=1)  # Add bias term, shape: [batch_size, input_dim + 1]
+        #x_ext = torch.cat([x, torch.ones(batch_size, 1)], dim=1)  # Add bias term, shape: [batch_size, input_dim + 1]
+        x_ext = torch.cat([x, torch.ones(batch_size, 1, device=x.device)], dim=1)  # Add bias term, shape: [batch_size, input_dim + 1]
         
         # Schritt 1: Berechne die Regel-MF-Werte [B, R, C]
         if self.zeroG:
