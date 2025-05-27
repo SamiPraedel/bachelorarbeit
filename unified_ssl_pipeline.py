@@ -10,25 +10,17 @@ import csv
 import os # Added for path operations for saving visualizations
 import matplotlib.pyplot as plt # Added for plotting
 
-# Import configurations from experiment_config.py
-# Import CSV logging utilities
+
 try:
     import experiment_config as config
     from csv_logger import initialize_csv, append_to_csv # Import specific functions
     from visualizers import plot_firing_strengths # Import the new plotting function
-    # IMPORTANT: Ensure csv_logger.py's initialize_csv() function creates a header like:
-    # "Dataset", "Model", "SSL_Method", "Label_Fraction_%", "Teacher_Acc_%", "Student_Acc_%", "Sil_Firing_True"
-    # And that experiment_config.py has a boolean flag: VISUALIZE_FIRING_STRENGTHS (e.g., VISUALIZE_FIRING_STRENGTHS = True)
+
 except ImportError:
     print("Error: experiment_config.py or csv_logger.py not found. Please ensure they are in the same directory.")
     exit()
 
-# Import model-specific utilities and base classes if needed by trainers (already imported in trainer files)
-# from anfis_hybrid import HybridANFIS
-# from anfis_nonHyb import NoHybridANFIS
-# from PopFnn import POPFNN
 
-# Import trainer functions from their respective files
 from teacher_student_trainers import (
     train_hybrid_anfis_ssl, train_nohybrid_anfis_ssl, train_popfnn_ssl
 )
