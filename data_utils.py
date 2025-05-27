@@ -284,7 +284,7 @@ def load_wine_data(test_size = 0.2, random_state = 42):
     label_map = {4:0, 5:1, 6:2, 7:3, 8:4}
     y_mapped = y_train.map(label_map)
 
-    return X_train, y_mapped, X_test, y_test, mean
+    return X_train, y_mapped, X_test, y_test
 
 def load_abalon_data():  
     # fetch dataset 
@@ -335,7 +335,7 @@ def load_abalon_data():
 
 
 
-    return X_train, y_train, X_test, y_test, X_train_np
+    return X_train, y_train, X_test, y_test
 
 
 def load_abalone_data( test_size = 0.3, random_state = 8):

@@ -211,10 +211,9 @@ if __name__ == "__main__":
         m_min     = 0.8,
     )
 
-    # ----------- NEU: k-Means-Initialisierung --------------------
     clf.seed_boxes_kmeans(Xtr, ytr, k=3)   # 3 Start-Boxen je Klasse
 
-    # ----------- Online-Finetuning -------------------------------
+-
     clf.fit(Xtr, ytr, epochs=1, shuffle=True)
 
     print("Test-MCC:", clf.mcc_score(Xte, yte))

@@ -7,30 +7,55 @@ import torch.nn as nn
 import random
 import warnings
 import csv
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
-from sklearn.model_selection import train_test_split
-from anfis_hybrid import HybridANFIS
-from anfis_nonHyb import NoHybridANFIS
-from PopFnn import POPFNN
+import os # Added for path operations for saving visualizations
+import matplotlib.pyplot as plt # Added for plotting
 
-from data_utils import load_iris_data, load_K_chess_data_splitted, load_heart_data, load_wine_data, load_abalon_data
+# Import configurations from experiment_config.py
+# Import CSV logging utilities
+try:
+    import experiment_config as config
+    from csv_logger import initialize_csv, append_to_csv # Import specific functions
+    from visualizers import plot_firing_strengths # Import the new plotting function
+    # IMPORTANT: Ensure csv_logger.py's initialize_csv() function creates a header like:
+    # "Dataset", "Model", "SSL_Method", "Label_Fraction_%", "Teacher_Acc_%", "Student_Acc_%", "Sil_Firing_True"
+    # And that experiment_config.py has a boolean flag: VISUALIZE_FIRING_STRENGTHS (e.g., VISUALIZE_FIRING_STRENGTHS = True)
+except ImportError:
+    print("Error: experiment_config.py or csv_logger.py not found. Please ensure they are in the same directory.")
+    exit()
+
+# Import model-specific utilities and base classes if needed by trainers (already imported in trainer files)
+# from anfis_hybrid import HybridANFIS
+# from anfis_nonHyb import NoHybridANFIS
+# from PopFnn import POPFNN
+
+# Import trainer functions from their respective files
+from teacher_student_trainers import (
+    train_hybrid_anfis_ssl, train_nohybrid_anfis_ssl, train_popfnn_ssl
+)
+from rule_based_trainers import (
+    train_hybrid_anfis_rule_ssl, train_popfnn_rule_ssl
+)
+
+
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, silhouette_score # Added silhouette_score
+from sklearn.semi_supervised import LabelPropagation # Added for Label Propagation baseline
+from sklearn.model_selection import train_test_split
 
 warnings.filterwarnings("ignore")
-SEED = 42
-np.random.seed(SEED)
-random.seed(SEED)
-torch.manual_seed(SEED)
+np.random.seed(config.SEED)
+random.seed(config.SEED)
+torch.manual_seed(config.SEED)
 if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(SEED)
+    torch.cuda.manual_seed_all(config.SEED)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# ---------- Common Helper Functions ------------------------------------------------
-def semi_split(y_train_tensor: torch.Tensor, frac: float, seed: int = SEED):
+
+def semi_split(y_train_tensor: torch.Tensor, frac: float, seed: int = config.SEED): # Use config.SEED as default
     """Splits training data indices into labeled and unlabeled."""
     idx_lab, idx_unlab = train_test_split(
-        np.arange(len(y_train_tensor)),
+        np.arange(len(y_train_tensor.cpu())), 
         train_size=frac,
         stratify=y_train_tensor.cpu().numpy(),
         random_state=seed
@@ -39,7 +64,7 @@ def semi_split(y_train_tensor: torch.Tensor, frac: float, seed: int = SEED):
 
 def rf_teacher_pseudo_labels(X_train_np: np.ndarray, y_train_np: np.ndarray,
                              idx_lab: np.ndarray, idx_unlab: np.ndarray,
-                             thr: float = 0.9, seed: int = SEED):
+                             thr: float = 0.9, seed: int = config.SEED): # Use config.SEED as default
     """Trains a RandomForest teacher and generates pseudo-labels."""
     rf = RandomForestClassifier(n_estimators=400, max_depth=None, n_jobs=-1, random_state=seed)
     rf.fit(X_train_np[idx_lab], y_train_np[idx_lab])
@@ -59,210 +84,15 @@ def rf_teacher_pseudo_labels(X_train_np: np.ndarray, y_train_np: np.ndarray,
 
     return X_pseudo_np, y_pseudo_np, w_pseudo_np, rf, avg_confidence
 
-# ---------- Teacher-Student SSL Training Functions ----------------------------------
-def train_hybrid_anfis_ssl(X_l, y_l, X_p, y_p, w_p,
-                           input_dim, num_classes,
-                           num_mfs=4, max_rules=1000,
-                           epochs=50, lr=5e-3, seed=42, **kwargs):
-    X_all = torch.cat([X_l, X_p])
-    y_all = torch.cat([y_l, y_p])
-    w_all = torch.cat([torch.ones(len(y_l), device=device), w_p])
-    y_onehot = F.one_hot(y_all, num_classes).float()
-
-    model = HybridANFIS(input_dim, num_classes, num_mfs, max_rules, seed=seed).to(device)
-    opt = torch.optim.Adam([{'params': model.centers, 'lr': lr}, {'params': model.widths, 'lr': lr}])
-
-    for epoch in range(epochs):
-        model.train()
-        opt.zero_grad()
-        logits, norm_fs, x_ext = model(X_all)
-        loss = (w_all * F.cross_entropy(logits, y_all, reduction='none')).mean()
-        loss.backward()
-        opt.step()
-        model.update_consequents(norm_fs.detach(), x_ext.detach(), y_onehot)
-    return model
-
-def train_nohybrid_anfis_ssl(X_l, y_l, X_p, y_p, w_p,
-                             input_dim, num_classes,
-                             num_mfs=7, max_rules=2000, zeroG=False,
-                             epochs=100, lr=5e-3, seed=42, **kwargs):
-    X_all = torch.cat([X_l, X_p])
-    y_all = torch.cat([y_l, y_p])
-    w_all = torch.cat([torch.ones(len(y_l), device=device), w_p**2])
-
-    model = NoHybridANFIS(input_dim, num_classes, num_mfs, max_rules, seed=seed, zeroG=zeroG).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
-    ce_loss_fn = torch.nn.CrossEntropyLoss(reduction='none')
-
-    for _ in range(epochs):
-        model.train()
-        opt.zero_grad()
-        logits, norm_fs, mask = model(X_all)
-        loss_main = (w_all * ce_loss_fn(logits, y_all)).mean()
-        loss_aux = model.load_balance_loss(norm_fs.detach(), mask)
-        loss = loss_main + loss_aux
-        loss.backward()
-        opt.step()
-    return model
-
-def train_popfnn_ssl(X_l, y_l, X_p, y_p, w_p,
-                     input_dim, num_classes,
-                     num_mfs=4, epochs=50, lr=5e-4, seed=42, **kwargs):
-    X_all = torch.cat([X_l, X_p])
-    y_all = torch.cat([y_l, y_p])
-    w_all = torch.cat([torch.ones(len(y_l), device=device), w_p])
-
-    model = POPFNN(input_dim, num_classes, num_mfs=num_mfs).to(device)
-    model.pop_init(X_l, y_l)
-
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
-    loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
-
-    for _ in range(epochs):
-        model.train()
-        opt.zero_grad()
-        logits = model(X_all)
-        loss = (loss_fn(logits, y_all) * w_all).mean()
-        loss.backward()
-        opt.step()
-    return model
-
-# =========== NEW: Rule-Based Self-Training SSL Functions ==========================
-def train_hybrid_anfis_rule_ssl(X_l, y_l, X_u, input_dim, num_classes,
-                                num_mfs=4, max_rules=1000, epochs=200, lr=5e-3, seed=42,
-                                initial_train_ratio=0.2, rule_conf_thresh=0.9, firing_thresh=0.5, **kwargs):
-    """Trains HybridANFIS using rule-based self-training."""
-    model = HybridANFIS(input_dim, num_classes, num_mfs, max_rules, seed=seed).to(device)
-    opt = torch.optim.Adam([{'params': model.centers, 'lr': lr}, {'params': model.widths, 'lr': lr}])
-    
-    initial_epochs = int(epochs * initial_train_ratio)
-    y_l_onehot = F.one_hot(y_l, num_classes).float()
-    
-    for _ in range(initial_epochs):
-        model.train()
-        opt.zero_grad()
-        logits, norm_fs, x_ext = model(X_l)
-        loss = F.cross_entropy(logits, y_l)
-        loss.backward()
-        opt.step()
-        model.update_consequents(norm_fs.detach(), x_ext.detach(), y_l_onehot)
-
-    X_p, y_p, w_p = torch.empty(0, X_l.shape[1], device=device), torch.empty(0, device=device, dtype=torch.long), torch.empty(0, device=device)
-    
-    with torch.no_grad():
-        model.eval()
-        _, norm_fs_l, _ = model(X_l)
-        rule_class_weights = norm_fs_l.t() @ y_l_onehot
-        rule_class_probs = F.normalize(rule_class_weights, p=1, dim=1)
-        rule_confidence, confident_class = torch.max(rule_class_probs, dim=1)
-        confident_rules_mask = rule_confidence > rule_conf_thresh
-        
-        if confident_rules_mask.sum().item() > 0 and len(X_u) > 0:
-            _, norm_fs_u, _ = model(X_u)
-            sample_max_firing, sample_best_rule_idx = torch.max(norm_fs_u, dim=1)
-            best_rule_is_confident = confident_rules_mask[sample_best_rule_idx]
-            firing_is_strong = sample_max_firing > firing_thresh
-            pseudo_label_mask = best_rule_is_confident & firing_is_strong
-            idx_p = torch.where(pseudo_label_mask)[0]
-            
-            if len(idx_p) > 0:
-                X_p = X_u[idx_p]
-                best_rules_for_pseudo_samples = sample_best_rule_idx[idx_p]
-                y_p = confident_class[best_rules_for_pseudo_samples]
-                w_p = rule_confidence[best_rules_for_pseudo_samples]
-    
-    X_all = torch.cat([X_l, X_p])
-    y_all = torch.cat([y_l, y_p])
-    w_all = torch.cat([torch.ones(len(y_l), device=device), w_p])
-    y_all_onehot = F.one_hot(y_all, num_classes).float()
-
-    for _ in range(epochs - initial_epochs):
-        model.train()
-        opt.zero_grad()
-        logits, norm_fs, x_ext = model(X_all)
-        loss = (w_all * F.cross_entropy(logits, y_all, reduction='none')).mean()
-        loss.backward()
-        opt.step()
-        model.update_consequents(norm_fs.detach(), x_ext.detach(), y_all_onehot)
-
-    return model, len(X_p)
-
-
-def train_popfnn_rule_ssl(X_l, y_l, X_u, input_dim, num_classes,
-                          num_mfs=4, epochs=50, lr=5e-4, seed=42, 
-                          rule_conf_thresh=0.9, **kwargs):
-    """Trains POPFNN using its inherent rule structure for SSL."""
-    torch.manual_seed(seed)
-    model = POPFNN(input_dim, num_classes, num_mfs=num_mfs).to(device)
-    model.pop_init(X_l, y_l)
-    
-    if model.R == 0: # No rules were generated, train supervised only
-        opt = torch.optim.Adam(model.parameters(), lr=lr)
-        for _ in range(epochs):
-            opt.zero_grad()
-            loss = F.cross_entropy(model(X_l), y_l)
-            loss.backward(); opt.step()
-        return model, 0
-
-    X_p, y_p, w_p = torch.empty(0, X_l.shape[1], device=device), torch.empty(0, device=device, dtype=torch.long), torch.empty(0, device=device)
-    
-    with torch.no_grad():
-        rule_class_weights = model.W.view(model.R, model.C, model.M).sum(dim=2)
-        rule_confidence, confident_class = torch.max(rule_class_weights, dim=1)
-        confident_rules_mask = rule_confidence > rule_conf_thresh
-
-        if confident_rules_mask.sum().item() > 0 and len(X_u) > 0:
-            fire_u = model._fire(X_u)
-            sample_max_firing, sample_best_rule_idx = torch.max(fire_u, dim=1)
-            best_rule_is_confident = confident_rules_mask[sample_best_rule_idx]
-            idx_p = torch.where(best_rule_is_confident)[0]
-
-            if len(idx_p) > 0:
-                X_p = X_u[idx_p]
-                best_rules_for_pseudo_samples = sample_best_rule_idx[idx_p]
-                y_p = confident_class[best_rules_for_pseudo_samples]
-                w_p = rule_confidence[best_rules_for_pseudo_samples]
-
-    X_all = torch.cat([X_l, X_p])
-    y_all = torch.cat([y_l, y_p])
-    w_all = torch.cat([torch.ones(len(y_l), device=device), w_p])
-    
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
-    loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
-    
-    for _ in range(epochs):
-        model.train()
-        opt.zero_grad()
-        logits = model(X_all)
-        loss = (loss_fn(logits, y_all) * w_all).mean()
-        loss.backward()
-        opt.step()
-        
-    return model, len(X_p)
-
-# ---------- CSV Logging Helper ---------------------------------------------
-CSV_FILE_PATH = "ssl_experiment_results_v2.csv"
-CSV_HEADERS = [
-    "Dataset", "Model", "SSL_Method", "Label_Fraction_Percent", "SSL_Threshold",
-    "Seed", "Epochs", "Learning_Rate", "Num_MFs", "Max_Rules", "ZeroG",
-    "Num_Labeled", "Num_Pseudo_Labeled", "Avg_Pseudo_Confidence",
-    "Teacher_Accuracy_Percent", "Student_Accuracy_Percent"
-]
-COLUMN_WIDTHS = [15, 15, 12, 24, 15, 6, 8, 15, 10, 10, 7, 14, 20, 24, 28, 28]
-
-def format_for_csv_row(data_list, widths):
-    return [str(item).ljust(widths[i]) for i, item in enumerate(data_list)]
-
-def initialize_csv():
-    with open(CSV_FILE_PATH, 'w', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(format_for_csv_row(CSV_HEADERS, COLUMN_WIDTHS))
-
-def append_to_csv(data_row):
-    with open(CSV_FILE_PATH, 'a', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(format_for_csv_row(data_row, COLUMN_WIDTHS))
-
+# ---------- Trainer Function Mapping --------------------------------------
+# Used to resolve trainer function names from the configuration
+TRAINER_MAPPING = {
+    "train_hybrid_anfis_ssl": train_hybrid_anfis_ssl,
+    "train_popfnn_ssl": train_popfnn_ssl,
+    "train_hybrid_anfis_rule_ssl": train_hybrid_anfis_rule_ssl,
+    "train_popfnn_rule_ssl": train_popfnn_rule_ssl,
+    "train_nohybrid_anfis_ssl": train_nohybrid_anfis_ssl
+}
 # ---------- Main Experiment Loop ------------------------------------------
 def run_experiments(datasets_config, models_config, label_fractions, teacher_conf_threshold):
     print(f"Using device: {device}")
@@ -275,99 +105,168 @@ def run_experiments(datasets_config, models_config, label_fractions, teacher_con
         X_tr_np, y_tr_np = X_tr_tensor.cpu().numpy(), y_tr_tensor.cpu().numpy()
         input_dim = X_tr_tensor.shape[1]
         num_classes = int(y_tr_tensor.max().item() + 1)
+        X_te_np = X_te_tensor.cpu().numpy() # Moved here for broader access
+        y_te_np = y_te_tensor.cpu().numpy() # Moved here for broader access
 
-        for model_name, model_trainer_fn, model_params in models_config:
-            ssl_method = model_params.get("ssl_method", "teacher")
-            model_display_name = f"{model_name}_{ssl_method.upper()}"
+        for model_name, model_config_key, model_params_from_config in models_config:
             
             for frac in label_fractions:
-                print(f"\n  --- Model: {model_display_name}, Label Fraction: {frac*100:.0f}% ---")
-                idx_l, idx_u = semi_split(y_tr_tensor, frac, seed=SEED)
+                idx_l, idx_u = semi_split(y_tr_tensor, frac, seed=config.SEED)
                 X_l, y_l = X_tr_tensor[idx_l].to(device), y_tr_tensor[idx_l].to(device)
+                X_l_np, y_l_np = X_l.cpu().numpy(), y_l.cpu().numpy() # For sklearn models
 
-                num_pseudo_labels, avg_pseudo_conf, teacher_acc, ssl_threshold_log = 0, "N/A", "N/A", "N/A"
+                # Initialize common variables
+                trained_model_obj = None
+                y_pred_ssl_np = None
+                predictions_output = None # For PyTorch model outputs (potentially with firing strengths)
+                teacher_acc_str = "N/A"
+                num_pseudo_labels_for_print = 0 # For the print statement
+                ssl_model_acc = 0.0
                 
-                # Create a mutable copy of model_params to pass to trainers
-                current_params = model_params.copy()
+                current_params = model_params_from_config.copy()
+                current_params['seed'] = config.SEED # Pass seed to trainers
+                
+                # Determine ssl_method_tag for display and logging (comes from config)
+                # This tag also helps determine how the model is handled (PyTorch SSL, RF Baseline, LP Baseline)
+                ssl_method_tag = current_params.get("ssl_method", "UnknownSSL")
+                model_display_name = f"{model_name}_{ssl_method_tag.upper()}"
+                print(f"\n  --- Model: {model_display_name}, Label Fraction: {frac*100:.0f}% ---")
 
-                if ssl_method == "teacher":
+                if model_config_key == "SKLEARN_RF_BASELINE":
+                    print(f"    Training RF Baseline...")
+                    rf_baseline = RandomForestClassifier(n_estimators=current_params.get('n_estimators', 100), 
+                                                         max_depth=current_params.get('max_depth', None),
+                                                         random_state=config.SEED, n_jobs=-1)
+                    rf_baseline.fit(X_l_np, y_l_np)
+                    y_pred_ssl_np = rf_baseline.predict(X_te_np)
+                    trained_model_obj = rf_baseline # Store for consistency, though not used further in this path
+                    num_pseudo_labels_for_print = 0 # No pseudo-labels in this context
+
+                elif model_config_key == "SKLEARN_LABEL_PROP":
+                    print(f"    Training Label Propagation Baseline...")
+                    # Prepare labels for LabelPropagation: known labels and -1 for unlabeled
+                    y_lp_input = np.full_like(y_tr_np, fill_value=-1, dtype=np.int64)
+                    y_lp_input[idx_l.cpu().numpy()] = y_l_np
+                    
+                    lp_params = {k: v for k, v in current_params.items() if k not in ['ssl_method', 'seed']}
+                    lp_model = LabelPropagation(**lp_params)
+                    
+                    lp_model.fit(X_tr_np, y_lp_input)
+                    y_pred_ssl_np = lp_model.predict(X_te_np)
+                    trained_model_obj = lp_model
+                    num_pseudo_labels_for_print = len(idx_u) # All unlabeled data is used by LP
+
+                elif model_config_key in TRAINER_MAPPING: # Existing PyTorch SSL models
+                    model_trainer_fn = TRAINER_MAPPING[model_config_key]
+                    
                     ssl_threshold_log = f"{teacher_conf_threshold:.2f}"
-                    X_p_np, y_p_np, w_p_np, rf, avg_conf = rf_teacher_pseudo_labels(
-                        X_tr_np, y_tr_np, idx_l.cpu().numpy(), idx_u.cpu().numpy(),
-                        thr=teacher_conf_threshold, seed=SEED)
-                    
-                    X_p = torch.from_numpy(X_p_np).float().to(device)
-                    y_p = torch.from_numpy(y_p_np).long().to(device)
-                    w_p = torch.from_numpy(w_p_np).float().to(device)
-                    
-                    num_pseudo_labels = len(X_p)
-                    avg_pseudo_conf = f"{avg_conf:.4f}"
-                    teacher_acc = f"{accuracy_score(y_te_tensor.cpu().numpy(), rf.predict(X_te_tensor.cpu().numpy()))*100:.2f}"
-                    
-                    trained_model = model_trainer_fn(
-                        X_l, y_l, X_p, y_p, w_p,
-                        input_dim, num_classes, seed=SEED, **current_params)
 
-                elif ssl_method == "rule_based":
-                    X_u = X_tr_tensor[idx_u].to(device)
-                    rule_thr = current_params.get('rule_conf_thresh', 'N/A')
-                    fire_thr = current_params.get('firing_thresh', 'N/A')
-                    ssl_threshold_log = f"R:{rule_thr}|F:{fire_thr}"
+                    if ssl_method_tag.lower() == "teacher": # Check against the tag from config
+                        X_p_np, y_p_np, w_p_np, rf_teacher, avg_conf = rf_teacher_pseudo_labels(
+                            X_tr_np, y_tr_np, idx_l.cpu().numpy(), idx_u.cpu().numpy(),
+                            thr=teacher_conf_threshold, seed=config.SEED)
+                        
+                        X_p = torch.from_numpy(X_p_np).float().to(device)
+                        y_p = torch.from_numpy(y_p_np).long().to(device)
+                        w_p = torch.from_numpy(w_p_np).float().to(device)
+                        
+                        num_pseudo_labels_for_print = len(X_p)
+                        # avg_pseudo_conf_str = f"{avg_conf:.4f}" # If needed for logging
+                        teacher_acc_str = f"{accuracy_score(y_te_np, rf_teacher.predict(X_te_np))*100:.2f}"
+                        
+                        trained_model_obj = model_trainer_fn(
+                            X_l, y_l, X_p, y_p, w_p,
+                            input_dim, num_classes, device, **current_params)
+
+                    elif ssl_method_tag.lower() == "rule_based": # Check against the tag from config
+                        X_u = X_tr_tensor[idx_u].to(device)
+                        # rule_thr = current_params.get('rule_conf_thresh', 'N/A') # If needed for logging
+                        # fire_thr = current_params.get('firing_thresh', 'N/A') # If needed for logging
+                        # ssl_threshold_log = f"R:{rule_thr}|F:{fire_thr}" # If needed for logging
+                        
+                        trained_model_obj, num_pseudo_from_trainer = model_trainer_fn(
+                            X_l, y_l, X_u,
+                            input_dim, num_classes, device, **current_params)
+                        num_pseudo_labels_for_print = num_pseudo_from_trainer
+                    else:
+                        print(f"      Warning: Unknown ssl_method '{ssl_method_tag}' for PyTorch model {model_name}. Skipping.")
+                        continue # Skip to next fraction or model
+
+                    # Evaluation for PyTorch models
+                    if trained_model_obj:
+                        trained_model_obj.eval()
+                        with torch.no_grad():
+                            predictions_output = trained_model_obj(X_te_tensor.to(device))
+                        
+                        final_model_output = predictions_output[0] if isinstance(predictions_output, tuple) else predictions_output
+                        y_pred_ssl_torch = final_model_output.argmax(dim=1).cpu()
+                        y_pred_ssl_np = y_pred_ssl_torch.numpy()
+                else:
+                    print(f"      Warning: Unknown model_config_key '{model_config_key}'. Skipping.")
+                    continue # Skip to next fraction or model
+
+                print(f"      Labeled: {len(X_l)}, Pseudo-involved/Unlabeled used: {num_pseudo_labels_for_print}")
+                
+                # --- Calculate SSL Model Accuracy (common for all paths if y_pred_ssl_np is set) ---
+                if y_pred_ssl_np is not None:
+                    ssl_model_acc = accuracy_score(y_te_np, y_pred_ssl_np)
+                    print(f"      Teacher Acc: {teacher_acc_str}% | Student Acc: {ssl_model_acc*100:5.2f}%")
+                else:
+                    print(f"      WARNING: y_pred_ssl_np not set for {model_display_name}. Accuracy will be 0.")
+                    ssl_model_acc = 0.0
+                
+                # --- Silhouette Score Calculation ---
+                # Sil_Feat_True and Sil_Feat_Pred have been removed as per request.
+                # Only Sil_Firing_True remains.
+                firing_strengths_silhouette_str = "N/A"
+
+
+                # --- Firing Strength Analysis and Visualization ---
+                # This section is primarily for PyTorch models that return firing strengths
+                if predictions_output is not None and isinstance(predictions_output, tuple) and len(predictions_output) > 1:
+                    firing_strengths = predictions_output[1].cpu().numpy()
+                    print(f"      Firing strengths detected with shape: {firing_strengths.shape}")
+
+                    fs_for_silhouette = firing_strengths.reshape(firing_strengths.shape[0], -1) # Ensure 2D
                     
-                    trained_model, num_pseudo_labels = model_trainer_fn(
-                        X_l, y_l, X_u,
-                        input_dim, num_classes, seed=SEED, **current_params)
-                
-                print(f"      Labeled: {len(X_l)}, Pseudo-labeled: {num_pseudo_labels}")
-                
-                # Evaluation
-                trained_model.eval()
-                with torch.no_grad():
-                    predictions = trained_model(X_te_tensor.to(device))
-                    y_pred_ssl = predictions[0].argmax(dim=1).cpu() if isinstance(predictions, tuple) else predictions.argmax(dim=1).cpu()
-                
-                ssl_model_acc = accuracy_score(y_te_tensor.cpu().numpy(), y_pred_ssl.numpy())
-                print(f"      Teacher Acc: {teacher_acc}% | Student Acc: {ssl_model_acc*100:5.2f}%")
-                
+                    if fs_for_silhouette.shape[0] == len(y_te_np) and fs_for_silhouette.shape[1] > 0 and y_pred_ssl_np is not None:
+                        try:
+                            if len(np.unique(y_te_np)) > 1 and fs_for_silhouette.shape[0] > 1:
+                                score = silhouette_score(fs_for_silhouette, y_te_np)
+                                firing_strengths_silhouette_str = f"{score:.4f}"
+                                print(f"      Silhouette (Firing Strengths, True Labels): {score:.4f}")
+                            else:
+                                print("      Silhouette (Firing Strengths, True Labels): N/A (not enough unique labels or samples)")
+                        except ValueError as e:
+                            print(f"      Error calculating Silhouette on firing strengths: {e}")
+                            firing_strengths_silhouette_str = "N/A (ValueError)"
+
+                        # --- Visualization of Firing Strengths ---
+                        if hasattr(config, 'VISUALIZE_FIRING_STRENGTHS') and config.VISUALIZE_FIRING_STRENGTHS:
+                            plot_firing_strengths(
+                                firing_strengths_np=fs_for_silhouette,
+                                true_labels_np=y_te_np,
+                                dataset_name=dataset_name,
+                                model_display_name=model_display_name,
+                                label_fraction_percentage=frac*100,
+                                base_viz_path="visualizations" # Default, can be configured
+                            )
+                else:
+                    if model_config_key in TRAINER_MAPPING: # Only print for models expected to have them
+                        print("      Firing strengths not available or not in expected format from model output.")
+
                 # Logging
                 result_row = [
-                    dataset_name, model_name, ssl_method, f"{frac*100:.0f}", ssl_threshold_log, SEED,
-                    current_params.get("epochs", "N/A"),
-                    f"{current_params.get('lr', 'N/A'):.1e}",
-                    current_params.get("num_mfs", "N/A"),
-                    current_params.get("max_rules", "N/A"),
-                    current_params.get("zeroG", "N/A"),
-                    len(X_l), num_pseudo_labels, avg_pseudo_conf, teacher_acc,
-                    f"{ssl_model_acc*100:.2f}"
+                    dataset_name, model_name, ssl_method_tag, f"{frac*100:.0f}", teacher_acc_str,
+                    f"{ssl_model_acc*100:.2f}", firing_strengths_silhouette_str
                 ]
                 append_to_csv(result_row)
 
 if __name__ == "__main__":
-    DATASETS = {
-        "Iris": load_iris_data, "K_Chess": load_K_chess_data_splitted,
-        "Heart": load_heart_data, "Wine": load_wine_data, "Abalon": load_abalon_data,
-    }
-
-    MODELS = [
-        # --- Teacher-Student SSL Models ---
-        ("HybridANFIS", train_hybrid_anfis_ssl, {
-            "ssl_method": "teacher", "num_mfs": 4, "max_rules": 1000, "epochs": 200, "lr": 5e-3
-        }),
-        ("POPFNN", train_popfnn_ssl, {
-            "ssl_method": "teacher", "num_mfs": 4, "epochs": 300, "lr": 5e-4
-        }),
-        # --- Rule-Based Self-Training SSL Models ---
-        ("HybridANFIS", train_hybrid_anfis_rule_ssl, {
-            "ssl_method": "rule_based", "num_mfs": 4, "max_rules": 1000, "epochs": 200, "lr": 5e-3,
-            "initial_train_ratio": 0.2, "rule_conf_thresh": 0.9, "firing_thresh": 0.5
-        }),
-        ("POPFNN", train_popfnn_rule_ssl, {
-            "ssl_method": "rule_based", "num_mfs": 4, "epochs": 300, "lr": 5e-4,
-            "rule_conf_thresh": 0.9
-        }),
-    ]
-
-    LABEL_FRACTIONS = [0.1, 0.2, 0.5]
-    TEACHER_CONF_THRESHOLD = 0.90
-
-    run_experiments(DATASETS, MODELS, LABEL_FRACTIONS, TEACHER_CONF_THRESHOLD)
+    # Load configurations from the config file
+    run_experiments(
+        config.DATASETS,
+        config.MODELS,
+        config.LABEL_FRACTIONS,
+        config.TEACHER_CONF_THRESHOLD
+    )
