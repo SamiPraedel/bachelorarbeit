@@ -10,11 +10,15 @@ import os
 import torch._dynamo
 from collections import Counter
 
+# Assuming these files are in the Python path or same directory
+from anfis_hybrid import HybridANFIS
+from anfis_nonHyb import NoHybridANFIS
 from anfisHelper import initialize_mfs_with_kmeans, initialize_mfs_with_fcm, set_rule_subset
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 @profile
 def train_anfis_noHyb(model, X, Y, num_epochs, lr, dataloader):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     
     initialize_mfs_with_kmeans(model, X)  # X_train as np array
@@ -59,7 +63,6 @@ def train_anfis_noHyb(model, X, Y, num_epochs, lr, dataloader):
 
 @profile
 def train_anfis_hybrid(model, X, Y, num_epochs, lr):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  
     model.to(device)
     
     initialize_mfs_with_kmeans(model, X)
@@ -136,3 +139,52 @@ def train_anfis_hybrid(model, X, Y, num_epochs, lr):
         if (epoch) % 1 == 0:
             print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.6f}")
             
+
+def train_hybrid_anfis_ssl(X_l, y_l, X_p, y_p, w_p,
+                           input_dim, num_classes,
+                           num_mfs=4, max_rules=1000,
+                           epochs=50, lr=5e-3, seed=42): # Added default seed for consistency
+    X_all = torch.cat([X_l, X_p]).to(device)
+    y_all = torch.cat([y_l, y_p]).to(device)
+    w_all = torch.cat([torch.ones(len(y_l), device=device), w_p.to(device)])
+    y_onehot = F.one_hot(y_all, num_classes).float()
+
+    model = HybridANFIS(input_dim, num_classes, num_mfs, max_rules, seed=seed).to(device)
+    opt = torch.optim.Adam([
+        {'params': model.centers, 'lr': lr},
+        {'params': model.widths, 'lr': lr},
+    ])
+
+    for epoch in range(epochs):
+        model.train()
+        opt.zero_grad()
+        logits, norm_fs, x_ext = model(X_all)
+        loss = (w_all * F.cross_entropy(logits, y_all, reduction='none')).mean()
+        loss.backward()
+        opt.step()
+        model.update_consequents(norm_fs.detach(), x_ext.detach(), y_onehot)
+    return model
+
+def train_nohybrid_anfis_ssl(X_l, y_l, X_p, y_p, w_p,
+                             input_dim, num_classes,
+                             num_mfs=7, max_rules=2000, zeroG=False,
+                             epochs=100, lr=5e-3, seed=42): # Added default seed
+    X_all = torch.cat([X_l, X_p]).to(device)
+    y_all = torch.cat([y_l, y_p]).to(device)
+    # Original NoHybrid pipeline squared the pseudo-label weights
+    w_all = torch.cat([torch.ones(len(y_l), device=device), w_p.to(device)**2])
+
+    model = NoHybridANFIS(input_dim, num_classes, num_mfs, max_rules, seed=seed, zeroG=zeroG).to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    ce_loss_fn = torch.nn.CrossEntropyLoss(reduction='none')
+
+    for _ in range(epochs):
+        model.train()
+        opt.zero_grad()
+        logits, norm_fs, mask = model(X_all)
+        loss_main = (w_all * ce_loss_fn(logits, y_all)).mean()
+        loss_aux = model.load_balance_loss(norm_fs.detach(), mask) # Assumes alpha is handled in model
+        loss = loss_main + loss_aux
+        loss.backward()
+        opt.step()
+    return model

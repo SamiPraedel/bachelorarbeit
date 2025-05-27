@@ -2,10 +2,14 @@ from sklearn.datasets import load_iris
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 import torch, torch.nn as nn, torch.optim as optim
+import torch.nn.functional as F # Added import
 from PopFnn import POPFNN
 from torch.cuda.amp import autocast, GradScaler
-from data_utils import load_iris_data, load_heart_data, load_wine_data, load_abalon_data, load_K_chess_data, load_Kp_chess_data, load_K_chess_data_splitted, load_K_chess_data_OneHot, load_Poker_data, load_Kp_chess_data_ord
+from data_utils import load_iris_data, load_heart_data, load_wine_data, load_abalon_data, load_Kp_chess_data, load_K_chess_data_splitted, load_K_chess_data_OneHot, load_Poker_data, load_Kp_chess_data_ord
 from anfisHelper import initialize_mfs_with_kmeans, initialize_mfs_with_fcm, set_rule_subset
+
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def train_popfnn(model, Xtr, ytr, epochs=5, lr=1e-3):
     initialize_mfs_with_kmeans(model, Xtr)
@@ -41,12 +45,32 @@ def train_popfnn(model, Xtr, ytr, epochs=5, lr=1e-3):
 
     return model         
 
+def train_popfnn_ssl(X_l, y_l, X_p, y_p, w_p,
+                     input_dim, num_classes,
+                     num_mfs=4, epochs=50, lr=5e-4, seed=42): # Added default seed
+    X_all = torch.cat([X_l, X_p]).to(device)
+    y_all = torch.cat([y_l, y_p]).to(device)
+    w_all = torch.cat([torch.ones(len(y_l), device=device), w_p.to(device)])
+
+    model = POPFNN(input_dim, num_classes, num_mfs=num_mfs).to(device) # seed is not typically a param for POPFNN constructor
+    model.pop_init(X_l.to(device), y_l.to(device))  # POPFNN specific initialization
+
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
+
+    for _ in range(epochs):
+        model.train()
+        opt.zero_grad()
+        logits = model(X_all)
+        loss = (loss_fn(logits, y_all) * w_all).mean()
+        loss.backward()
+        opt.step()
+    return model
 
 
 
 if __name__ == "__main__":
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
+    print(f"Using device: {device}") # Now uses module-level device
     #Xtr, Ytr, Xte, Yte = load_iris_data()
     #Xtr, Ytr, Xte, Yte = load_Kp_chess_data_ord()
     #Xtr, Ytr, Xte, Yte = load_Poker_data()

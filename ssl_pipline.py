@@ -5,16 +5,16 @@ import torch
 import torch.nn.functional as F
 import random
 import warnings
+import csv # Added import for CSV writing
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 
 # Assuming these files are in the same directory or Python path
-from data_utils import load_iris_data, load_K_chess_data_splitted, load_Kp_chess_data_ord
-from anfis_hybrid import HybridANFIS
-from PopFnn import POPFNN
-from anfis_nonHyb import NoHybridANFIS
+from data_utils import load_iris_data, load_K_chess_data_splitted, load_Kp_chess_data_ord, load_heart_data, load_wine_data, load_abalon_data, load_K_chess_data_OneHot, load_Poker_data
 # from pop_ssl_utils import rule_class_mapping # Optional: if you want to use this for POPFNN
+from trainAnfis import train_hybrid_anfis_ssl, train_nohybrid_anfis_ssl
+from trainPF import train_popfnn_ssl
 
 warnings.filterwarnings("ignore")
 SEED = 42
@@ -59,82 +59,56 @@ def rf_teacher_pseudo_labels(X_train_np: np.ndarray, y_train_np: np.ndarray,
 
     return X_pseudo_np, y_pseudo_np, w_pseudo_np, rf, avg_confidence
 
-# ---------- Model Specific Training Functions ------------------------------------
+# ---------- CSV Logging Helper ---------------------------------------------
+CSV_FILE_PATH = "ssl_experiment_results.csv"
 
-def train_hybrid_anfis_ssl(X_l, y_l, X_p, y_p, w_p,
-                           input_dim, num_classes,
-                           num_mfs=4, max_rules=1000,
-                           epochs=50, lr=5e-3, seed=SEED):
-    X_all = torch.cat([X_l, X_p]).to(device)
-    y_all = torch.cat([y_l, y_p]).to(device)
-    w_all = torch.cat([torch.ones(len(y_l), device=device), w_p.to(device)])
-    y_onehot = F.one_hot(y_all, num_classes).float()
+# Define column headers and their desired widths for alignment
+CSV_HEADERS = [
+    "Dataset", "Model", "Label_Fraction_Percent", "Teacher_Threshold", "Seed",
+    "Epochs", "Learning_Rate", "Num_MFs", "Max_Rules", "ZeroG",
+    "Num_Labeled", "Num_Pseudo_Labeled", "Avg_Teacher_Confidence",
+    "RF_Teacher_Accuracy_Percent", "SSL_Model_Accuracy_Percent"
+]
 
-    model = HybridANFIS(input_dim, num_classes, num_mfs, max_rules, seed=seed).to(device)
-    opt = torch.optim.Adam([
-        {'params': model.centers, 'lr': lr},
-        {'params': model.widths, 'lr': lr},
-    ])
+COLUMN_WIDTHS = [
+    15,  # Dataset
+    18,  # Model
+    24,  # Label_Fraction_Percent
+    18,  # Teacher_Threshold
+    6,   # Seed
+    8,   # Epochs
+    15,  # Learning_Rate
+    10,  # Num_MFs
+    10,  # Max_Rules
+    7,   # ZeroG
+    14,  # Num_Labeled
+    20,  # Num_Pseudo_Labeled
+    24,  # Avg_Teacher_Confidence
+    28,  # RF_Teacher_Accuracy_Percent
+    28   # SSL_Model_Accuracy_Percent
+]
 
-    for epoch in range(epochs):
-        model.train()
-        opt.zero_grad()
-        logits, norm_fs, x_ext = model(X_all)
-        loss = (w_all * F.cross_entropy(logits, y_all, reduction='none')).mean()
-        loss.backward()
-        opt.step()
-        model.update_consequents(norm_fs.detach(), x_ext.detach(), y_onehot)
-    return model
+def format_for_csv_row(data_list, widths):
+    """Pads each item in the list to the specified width."""
+    return [str(item).ljust(widths[i]) for i, item in enumerate(data_list)]
 
-def train_popfnn_ssl(X_l, y_l, X_p, y_p, w_p,
-                     input_dim, num_classes,
-                     num_mfs=4, epochs=50, lr=5e-4, seed=SEED):
-    X_all = torch.cat([X_l, X_p]).to(device)
-    y_all = torch.cat([y_l, y_p]).to(device)
-    w_all = torch.cat([torch.ones(len(y_l), device=device), w_p.to(device)])
+def initialize_csv():
+    """Initializes the CSV file with headers."""
+    with open(CSV_FILE_PATH, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(format_for_csv_row(CSV_HEADERS, COLUMN_WIDTHS))
 
-    model = POPFNN(input_dim, num_classes, num_mfs=num_mfs).to(device)
-    model.pop_init(X_l.to(device), y_l.to(device))  # POPFNN specific initialization
-
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
-    loss_fn = torch.nn.CrossEntropyLoss(reduction="none")
-
-    for _ in range(epochs):
-        model.train()
-        opt.zero_grad()
-        logits = model(X_all)
-        loss = (loss_fn(logits, y_all) * w_all).mean()
-        loss.backward()
-        opt.step()
-    return model
-
-def train_nohybrid_anfis_ssl(X_l, y_l, X_p, y_p, w_p,
-                             input_dim, num_classes,
-                             num_mfs=7, max_rules=2000, zeroG=False,
-                             epochs=100, lr=5e-3, seed=SEED):
-    X_all = torch.cat([X_l, X_p]).to(device)
-    y_all = torch.cat([y_l, y_p]).to(device)
-    # Original NoHybrid pipeline squared the pseudo-label weights
-    w_all = torch.cat([torch.ones(len(y_l), device=device), w_p.to(device)**2])
-
-    model = NoHybridANFIS(input_dim, num_classes, num_mfs, max_rules, seed=seed, zeroG=zeroG).to(device)
-    opt = torch.optim.Adam(model.parameters(), lr=lr)
-    ce_loss_fn = torch.nn.CrossEntropyLoss(reduction='none')
-
-    for _ in range(epochs):
-        model.train()
-        opt.zero_grad()
-        logits, norm_fs, mask = model(X_all)
-        loss_main = (w_all * ce_loss_fn(logits, y_all)).mean()
-        loss_aux = model.load_balance_loss(norm_fs.detach(), mask) # Assumes alpha is handled in model
-        loss = loss_main + loss_aux
-        loss.backward()
-        opt.step()
-    return model
+def append_to_csv(data_row):
+    """Appends a row of data to the CSV file."""
+    with open(CSV_FILE_PATH, 'a', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(format_for_csv_row(data_row, COLUMN_WIDTHS))
 
 # ---------- Main Experiment Loop ------------------------------------------
 def run_experiments(datasets_config, models_config, label_fractions, teacher_threshold):
     print(f"Using device: {device}")
+    initialize_csv() # Initialize CSV file at the beginning of experiments
+
     for dataset_name, data_loader_fn in datasets_config.items():
         print(f"\n{'='*20} DATASET: {dataset_name.upper()} {'='*20}")
         X_tr_tensor, y_tr_tensor, X_te_tensor, y_te_tensor = data_loader_fn()
@@ -197,49 +171,63 @@ def run_experiments(datasets_config, models_config, label_fractions, teacher_thr
                 print(f"      RF Teacher Acc: {rf_acc*100:5.2f}% | "
                       f"{model_name} SSL Acc: {ssl_model_acc*100:5.2f}%")
                 
+                # Extract model-specific hyperparameters for logging
+                epochs_log = model_specific_params.get("epochs", "N/A")
+                lr_log = model_specific_params.get("lr", "N/A")
+                num_mfs_log = model_specific_params.get("num_mfs", "N/A")
+                max_rules_log = model_specific_params.get("max_rules", "N/A")
+                zero_g_log = model_specific_params.get("zeroG", "N/A")
+
+                # Log results to CSV
+                result_row = [
+                    dataset_name,
+                    model_name,
+                    f"{frac*100:.0f}",
+                    f"{teacher_threshold:.2f}",
+                    SEED,
+                    epochs_log,
+                    f"{lr_log:.1e}" if isinstance(lr_log, float) else lr_log,
+                    num_mfs_log,
+                    max_rules_log,
+                    zero_g_log,
+                    len(X_l_tensor),
+                    len(X_p_tensor),
+                    f"{avg_conf:.4f}",
+                    f"{rf_acc*100:.2f}",
+                    f"{ssl_model_acc*100:.2f}"
+                ]
+                append_to_csv(result_row)
                 # Optional: POPFNN specific output
                 # if model_name == "POPFNN" and hasattr(trained_model, 'get_rules_with_classes'):
                 #     print("      POPFNN Rule Class Mapping (Top 3):")
                 #     rule_class_mapping(trained_model, top_k=3) # Requires pop_ssl_utils
 
 if __name__ == "__main__":
-    # --- Configuration ---
+
     DATASETS = {
         "Iris": load_iris_data,
         "K_Chess": load_K_chess_data_splitted,
-        "Kp_Chess": load_Kp_chess_data_ord
+        "Heart": load_heart_data,
+        "Wine": load_wine_data,
+        "Abalon": load_abalon_data,
+        #"Kp_Chess": load_Kp_chess_data_ord
     }
 
-    # Define model trainers and their specific parameters
-    # Common params like epochs, lr can be set here or passed if they vary more.
+
+
     MODELS = [
         ("HybridANFIS", train_hybrid_anfis_ssl, {
-            "num_mfs": 4, "max_rules": 1000, "epochs": 50, "lr": 5e-3
+            "num_mfs": 4, "max_rules": 1000, "epochs": 200, "lr": 5e-3
         }),
         ("POPFNN", train_popfnn_ssl, {
-            "num_mfs": 4, "epochs": 50, "lr": 5e-4
+            "num_mfs": 4, "epochs": 300, "lr": 5e-4
         }),
         ("NoHybridANFIS", train_nohybrid_anfis_ssl, {
-            "num_mfs": 7, "max_rules": 2000, "zeroG": False, "epochs": 100, "lr": 5e-3
+            "num_mfs": 4, "max_rules": 1000, "zeroG": False, "epochs": 200, "lr": 5e-3
         }),
-        # Example: Add a supervised baseline using only labeled data for one of the models
-        # ("HybridANFIS_Supervised", train_hybrid_anfis_ssl, { # Use same trainer, but X_p, y_p, w_p will be empty
-        #     "num_mfs": 4, "max_rules": 1000, "epochs": 50, "lr": 5e-3
-        # }),
     ]
 
     LABEL_FRACTIONS = [0.1, 0.2, 0.3, 0.5] # Example fractions
     TEACHER_CONF_THRESHOLD = 0.90
 
-    # --- Run All Experiments ---
-    # To run for a specific dataset or model, filter DATASETS or MODELS dict/list before passing
-    # e.g., run_experiments({"Iris": load_iris_data}, [MODELS[0]], LABEL_FRACTIONS, TEACHER_CONF_THRESHOLD)
-    
     run_experiments(DATASETS, MODELS, LABEL_FRACTIONS, TEACHER_CONF_THRESHOLD)
-
-    # Example of running a specific configuration:
-    # print("\n\nRunning a specific configuration for Iris and HybridANFIS:")
-    # specific_datasets = {"Iris": DATASETS["Iris"]}
-    # specific_models = [model_config for model_config in MODELS if model_config[0] == "HybridANFIS"]
-    # run_experiments(specific_datasets, specific_models, [0.1], 0.95)
-
