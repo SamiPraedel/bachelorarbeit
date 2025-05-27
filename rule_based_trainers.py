@@ -5,12 +5,14 @@ import torch.nn as nn # For CrossEntropyLoss in POPFNN
 
 from anfis_hybrid import HybridANFIS
 from PopFnn import POPFNN
+from anfisHelper import initialize_mfs_with_kmeans, initialize_mfs_with_fcm, set_rule_subset
 
 def train_hybrid_anfis_rule_ssl(X_l, y_l, X_u, input_dim, num_classes, device,
                                 num_mfs=4, max_rules=1000, epochs=200, lr=5e-3, seed=42,
                                 initial_train_ratio=0.2, rule_conf_thresh=0.9, firing_thresh=0.5, **kwargs):
-    """Trains HybridANFIS using rule-based self-training."""
     model = HybridANFIS(input_dim, num_classes, num_mfs, max_rules, seed=seed).to(device)
+    X_all = torch.cat([X_l, X_u])
+    initialize_mfs_with_kmeans(model, X_all)
     opt = torch.optim.Adam([{'params': model.centers, 'lr': lr}, {'params': model.widths, 'lr': lr}])
     
     initial_epochs = int(epochs * initial_train_ratio)
@@ -69,12 +71,14 @@ def train_hybrid_anfis_rule_ssl(X_l, y_l, X_u, input_dim, num_classes, device,
 def train_popfnn_rule_ssl(X_l, y_l, X_u, input_dim, num_classes, device,
                           num_mfs=4, epochs=50, lr=5e-4, seed=42, 
                           rule_conf_thresh=0.9, **kwargs):
-    """Trains POPFNN using its inherent rule structure for SSL."""
-    torch.manual_seed(seed) # Note: POPFNN trainer has its own seed setting
+    torch.manual_seed(seed) 
+
     model = POPFNN(input_dim, num_classes, num_mfs=num_mfs).to(device)
+    X_all = torch.cat([X_l, X_u])
+    initialize_mfs_with_kmeans(model, X_all)
     model.pop_init(X_l, y_l)
     
-    if model.R == 0: # No rules were generated, train supervised only
+    if model.R == 0: 
         opt = torch.optim.Adam(model.parameters(), lr=lr)
         for _ in range(epochs):
             opt.zero_grad()

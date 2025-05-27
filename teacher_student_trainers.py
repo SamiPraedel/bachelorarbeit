@@ -6,6 +6,7 @@ import torch.nn as nn
 from anfis_hybrid import HybridANFIS
 from anfis_nonHyb import NoHybridANFIS
 from PopFnn import POPFNN
+from anfisHelper import initialize_mfs_with_kmeans, initialize_mfs_with_fcm, set_rule_subset
 
 def train_hybrid_anfis_ssl(X_l, y_l, X_p, y_p, w_p,
                            input_dim, num_classes, device,
@@ -17,6 +18,7 @@ def train_hybrid_anfis_ssl(X_l, y_l, X_p, y_p, w_p,
     y_onehot = F.one_hot(y_all, num_classes).float()
 
     model = HybridANFIS(input_dim, num_classes, num_mfs, max_rules, seed=seed).to(device)
+    initialize_mfs_with_kmeans(model, X_all)
     opt = torch.optim.Adam([{'params': model.centers, 'lr': lr}, {'params': model.widths, 'lr': lr}])
 
     for epoch in range(epochs):
@@ -38,6 +40,7 @@ def train_nohybrid_anfis_ssl(X_l, y_l, X_p, y_p, w_p,
     w_all = torch.cat([torch.ones(len(y_l), device=device), w_p**2])
 
     model = NoHybridANFIS(input_dim, num_classes, num_mfs, max_rules, seed=seed, zeroG=zeroG).to(device)
+    initialize_mfs_with_kmeans(model, X_all)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     ce_loss_fn = torch.nn.CrossEntropyLoss(reduction='none')
 
@@ -58,8 +61,10 @@ def train_popfnn_ssl(X_l, y_l, X_p, y_p, w_p,
     X_all = torch.cat([X_l, X_p])
     y_all = torch.cat([y_l, y_p])
     w_all = torch.cat([torch.ones(len(y_l), device=device), w_p])
-
+    
+    
     model = POPFNN(input_dim, num_classes, num_mfs=num_mfs).to(device)
+    initialize_mfs_with_kmeans(model, X_all)
     model.pop_init(X_l, y_l)
 
     opt = torch.optim.Adam(model.parameters(), lr=lr)
