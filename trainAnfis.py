@@ -23,7 +23,8 @@ def train_anfis_noHyb(model, X, Y, num_epochs, lr, dataloader):
     
     initialize_mfs_with_kmeans(model, X)  # X_train as np array
     #initialize_mfs_with_fcm(model, X)
-    
+
+    model.widths.data *= 1.
 
     model.train()
     optimizer = optim.Adam(model.parameters(), lr=lr)
@@ -32,13 +33,15 @@ def train_anfis_noHyb(model, X, Y, num_epochs, lr, dataloader):
     
     trainset = torch.utils.data.TensorDataset(X, Y)
     #dataloader = dataloader
-    dataloader = DataLoader(trainset, batch_size=32, shuffle=True)
+    dataloader = DataLoader(trainset, batch_size=128, shuffle=True)
     
     losses = []
     for epoch in range(1, num_epochs + 1):
 
         epoch_loss = 0.0
         for batch_X, batch_Y in dataloader:
+            batch_X = batch_X.to(device, non_blocking=True)
+            batch_Y = batch_Y.to(device, non_blocking=True)
             outputs, firing_strengths, mask = model(batch_X)  # outputs: [batch_size, num_classes]
             ce_loss = criterion(outputs, batch_Y)
             lb_loss  = model.load_balance_loss(firing_strengths, mask)
@@ -51,7 +54,7 @@ def train_anfis_noHyb(model, X, Y, num_epochs, lr, dataloader):
             model.widths.data.clamp_(min=0.2, max=0.8)
             model.centers.data.clamp_(min=0, max=1)
 
-        scheduler.step()
+        #scheduler.step()
 
         epoch_loss += loss.item()
         avg_loss = epoch_loss / len(dataloader)
@@ -59,6 +62,18 @@ def train_anfis_noHyb(model, X, Y, num_epochs, lr, dataloader):
        
         if (epoch+1) % 10 == 0:
             print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.4f}")
+    
+    # 1) Regeln mit cov < 0.2 % des Gesamtfeuers löschen
+    # cov_thr = 0.002
+    # cov_rel = cov / cov.sum()              # cov aus rule_stats
+    # keep    = cov_rel > cov_thr
+
+    # model.rules        = model.rules[keep]
+    # model.consequents  = nn.Parameter(model.consequents[keep])
+    # model.num_rules    = keep.sum().item()
+    
+    
+
 
 
 @profile
@@ -67,8 +82,8 @@ def train_anfis_hybrid(model, X, Y, num_epochs, lr):
     
     initialize_mfs_with_kmeans(model, X)
     #initialize_mfs_with_fcm(model, X)
-    model.widths.data *= 2.0                      # grob verdoppeln
-    model.widths.data.clamp_(min=0.06, max=0.6) 
+    model.widths.data *= 1.8                     # grob verdoppeln
+    model.widths.data.clamp_(min=0.06, max=0.9) 
     
     model.train()
     scaler = GradScaler()
@@ -83,6 +98,8 @@ def train_anfis_hybrid(model, X, Y, num_epochs, lr):
     #     coverage = fs.sum(0)                        # [R]: Gesamt-Firing pro Regel über alle Samples
     #     top_idx  = torch.topk(coverage, k).indices
     #     set_rule_subset(model, top_idx)
+
+        
         
     
     # freq = Counter(Y.tolist())
@@ -99,9 +116,9 @@ def train_anfis_hybrid(model, X, Y, num_epochs, lr):
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.3)
 
     trainset = torch.utils.data.TensorDataset(X, Y)
-    dataloader = DataLoader(trainset, batch_size=1024, num_workers=4, shuffle=True)
+    dataloader = DataLoader(trainset, batch_size=128, num_workers=0, shuffle=True)
     N, P = X.shape
-    k = int(N * 1)
+    k = int(N * 0.1)
     
     losses = []
     for epoch in range(num_epochs):
@@ -136,7 +153,7 @@ def train_anfis_hybrid(model, X, Y, num_epochs, lr):
         avg_loss = epoch_loss / len(dataloader)
         losses.append(avg_loss)
 
-        if (epoch) % 1 == 0:
+        if (epoch) % 10 == 0:
             print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.6f}")
             
 

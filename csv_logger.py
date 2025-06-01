@@ -15,7 +15,7 @@ CSV_HEADERS = [
     "Dataset", "Model", "SSL_Meth", "Lab_Frac", 
     "T_Acc", "S_Acc", "Sil_Firing_True"
 ]
-COLUMN_WIDTHS = [10, 12, 12, 12, 10, 10, 15, 15, 18]
+COLUMN_WIDTHS = [10, 12, 14, 12, 10, 10, 15, 15, 12]
 
 def format_for_csv_row(data_list, widths):
     return [str(item).ljust(widths[i]) for i, item in enumerate(data_list)]

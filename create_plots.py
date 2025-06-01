@@ -1,11 +1,19 @@
+import os
 import umap
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+
+# Define the directory for saving plots
+SAVE_DIR = "visualizations"
+# Ensure the directory exists when the script is imported/run
+os.makedirs(SAVE_DIR, exist_ok=True)
 
 def plot_firing_strengths(model, X, cmap='viridis'):
-
     model.eval()
     with torch.no_grad():
         _, norm_fs, _ = model(X)
-    
+
     # norm_fs hat Shape [N, num_rules]
     norm_fs_np = norm_fs.cpu().numpy()
     
@@ -17,14 +25,15 @@ def plot_firing_strengths(model, X, cmap='viridis'):
     embedding = reducer.fit_transform(norm_fs_np)
     
     # Plot erstellen
-    plt.figure(figsize=(10,8))
+    fig = plt.figure(figsize=(10,8))
     scatter = plt.scatter(embedding[:, 0], embedding[:, 1], c=colors, cmap=cmap, s=50)
     plt.colorbar(scatter, label='Max Firing Strength')
     plt.xlabel('UMAP Dimension 1')
     plt.ylabel('UMAP Dimension 2')
     plt.title('UMAP-Visualisierung der Firing Strengths')
     plt.grid(True)
-    plt.show()
+    plt.savefig(os.path.join(SAVE_DIR, "umap_firing_strengths.png"))
+    plt.close(fig)
     
 
 def plot_firing_strength_heatmap(self, x_min, x_max, y_min, y_max, grid_size=100, rule_index=None):
@@ -39,8 +48,6 @@ def plot_firing_strength_heatmap(self, x_min, x_max, y_min, y_max, grid_size=100
         :param grid_size: Auflösung des Gitters.
         :param rule_index: Index einer spezifischen Regel. Falls None, wird der maximale Firing Strength-Wert verwendet.
         """
-        import matplotlib.pyplot as plt
-        import numpy as np
         # Erzeuge ein Gitter im Eingaberaum
         x_vals = np.linspace(x_min, x_max, grid_size)
         y_vals = np.linspace(y_min, y_max, grid_size)
@@ -58,21 +65,28 @@ def plot_firing_strength_heatmap(self, x_min, x_max, y_min, y_max, grid_size=100
         if rule_index is not None:
             # Wähle den Firing Strength-Wert der angegebenen Regel
             selected_fs = firing_strengths[:, rule_index].cpu().numpy()
+            plot_title = f"Firing Strength Heatmap (Regel {rule_index})"
+            plot_filename = f"firing_strength_heatmap_rule_{rule_index}.png"
         else:
             # Wähle für jeden Punkt den maximalen Firing Strength-Wert
             selected_fs = firing_strengths.max(dim=1)[0].cpu().numpy()
+            plot_title = "Firing Strength Heatmap (maximal)"
+            plot_filename = "firing_strength_heatmap_max.png"
         
         # Reshape in die Gitterform
         selected_fs = selected_fs.reshape(grid_size, grid_size)
         
         # Plotten der Heatmap
-        plt.figure(figsize=(8, 6))
+        fig = plt.figure(figsize=(8, 6))
         plt.imshow(selected_fs, extent=(x_min, x_max, y_min, y_max), origin='lower', cmap='viridis')
         plt.colorbar(label="Firing Strength")
         plt.xlabel("Feature 1")
         plt.ylabel("Feature 2")
-        plt.title("Firing Strength Heatmap" + (f" (Regel {rule_index})" if rule_index is not None else " (maximal)"))
-        #plt.show()
+        plt.title(plot_title)
+        
+        save_path = os.path.join(SAVE_DIR, plot_filename)
+        plt.savefig(save_path)
+        plt.close(fig)
 
 def plot_umap_fixed_rule(model, X, rule_index, cmap='viridis'):
     """
@@ -85,9 +99,6 @@ def plot_umap_fixed_rule(model, X, rule_index, cmap='viridis'):
         rule_index: Index der festen Regel, deren Aktivierung zur Farbgebung verwendet wird.
         cmap: Colormap für den Plot.
     """
-    import umap.umap_ as umap
-    import matplotlib.pyplot as plt
-    
     model.eval()
     with torch.no_grad():
         # Berechne die normalized firing strengths: Shape [N, num_rules]
@@ -107,17 +118,15 @@ def plot_umap_fixed_rule(model, X, rule_index, cmap='viridis'):
     # Verwende den Firing-Strength-Wert der festen Regel als Farbe
     colors = firing_strengths_np[:, rule_index]
     
-    plt.figure(figsize=(10,8))
+    fig = plt.figure(figsize=(10,8))
     scatter = plt.scatter(embedding[:, 0], embedding[:, 1], c=colors, cmap=cmap, s=50)
     plt.colorbar(scatter, label=f'Firing Strength von Regel {rule_index}')
     plt.xlabel('UMAP Dimension 1')
     plt.ylabel('UMAP Dimension 2')
     plt.title(f'UMAP Plot der Firing Strengths (Feste Regel {rule_index})')
     plt.grid(True)
-    plt.show()
-
-import matplotlib.pyplot as plt
-import torch
+    plt.savefig(os.path.join(SAVE_DIR, f"umap_fixed_rule_{rule_index}.png"))
+    plt.close(fig)
 
 def plot_sample_firing_strengths(model, sample, rule_names=None, seed=42):
     """
@@ -138,7 +147,7 @@ def plot_sample_firing_strengths(model, sample, rule_names=None, seed=42):
     num_rules = fs.shape[0]
     x = list(range(num_rules))
     
-    plt.figure(figsize=(10, 5))
+    fig = plt.figure(figsize=(10, 5))
     plt.bar(x, fs, color='skyblue')
     plt.xlabel("Regel-Index")
     plt.ylabel("Firing Strength")
@@ -148,13 +157,15 @@ def plot_sample_firing_strengths(model, sample, rule_names=None, seed=42):
         plt.title("Firing Strengths für das ausgewählte Sample\n" + ", ".join(rule_names))
     plt.xticks(x, rule_names if rule_names is not None else x, rotation=45)
     plt.tight_layout()
-    plt.show()
+    plt.savefig(os.path.join(SAVE_DIR, "sample_firing_strengths.png"))
+    plt.close(fig)
 
 def plot_TopK(topk_p, firing):
-    plt.figure(figsize=(10,6))
+    fig = plt.figure(figsize=(10,6))
     plt.imshow((firing>0).astype(float), cmap='Greys', aspect='auto')
     plt.title(f"Aktiv‑Maske (K={topk_p})"); plt.xlabel("Regel"); plt.ylabel("Sample")
-    plt.show()
+    plt.savefig(os.path.join(SAVE_DIR, f"topk_activation_mask_k{topk_p}.png"))
+    plt.close(fig)
 
 def plot_sorted_Fs(preds, firing_strengths):
     sortedPreds, preds_ind  = torch.sort(preds)
@@ -188,7 +199,8 @@ def plot_sorted_Fs(preds, firing_strengths):
     cbar.set_label("Firing Strength")
 
     plt.title("Heatmap der Regelfiring Strengths mit Klassengrenzen")
-    plt.show()
+    plt.savefig(os.path.join(SAVE_DIR, "sorted_firing_strengths_heatmap.png"))
+    plt.close(fig)
             
     return
 

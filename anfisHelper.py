@@ -4,6 +4,8 @@ from sklearn.cluster import KMeans
 from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
 import skfuzzy as fuzz
 from torch import nn
+from sklearn.metrics import mutual_info_score
+import torch.nn.functional as F
 
 def initialize_mfs_with_kmeans(model, data):
     """
@@ -59,13 +61,11 @@ def initialize_mfs_with_kmeans(model, data):
     centers = np.array(centers_list, dtype=np.float32)  # Shape: (input_dim, num_mfs)
     widths  = np.array(widths_list,  dtype=np.float32)   # Shape: (input_dim, num_mfs)
     dev = data.device
-    print(f"Device: {dev}")
     with torch.no_grad():
         model.centers.data.copy_(torch.tensor(centers, device=dev))
         model.widths .data.copy_(torch.tensor(widths,  device=dev))
 
-    print(f"K-Means-based centers:\n{centers}")
-    print(f"K-Means-based widths:\n{widths}")
+
 
     return centers, widths
 
@@ -82,7 +82,7 @@ def initialize_mfs_with_fcm(model, data, m=2.0, error=1e-5, maxiter=200):
         data = data.cpu().numpy()
 
     X = data.T 
-    num_mfs = model.num_mfs
+    num_mfs = model.M
 
     # run FCM
     cntr, u, _, _, _, _, _ = fuzz.cluster.cmeans(
@@ -93,7 +93,7 @@ def initialize_mfs_with_fcm(model, data, m=2.0, error=1e-5, maxiter=200):
 
     # compute widths per dimension and cluster
     for i in range(centers.shape[0]):  # each dimension
-        Xi = data[:, i]  # now numpy array
+        Xi = data[:, i]  
         for k in range(num_mfs):
             u_k = u[k]  # membership of all samples to cluster k
             nume = np.sum((u_k**m) * (Xi - centers[i, k])**2)
@@ -105,8 +105,7 @@ def initialize_mfs_with_fcm(model, data, m=2.0, error=1e-5, maxiter=200):
         model.centers[:] = torch.tensor(centers, dtype=torch.float32)
         model.widths[:]  = torch.tensor(widths,  dtype=torch.float32)
 
-    print("FCM-based centers:\n", centers)
-    print("FCM-based widths:\n", widths)
+
     return centers, widths
 
 def weighted_sampler(X_train_t, y_train_t, y_train):
@@ -130,3 +129,25 @@ def set_rule_subset(self, rule_indices):
         torch.ones(k, self.input_dim+1, self.num_classes),
         requires_grad=False
     )
+    
+def rule_stats(model, X, y):
+    fire = model._forward_mf_only(X)           # [N,R]  bei POPFNN: model._fire
+    cov  = fire.sum(0)                         # Coverage
+    #print("Coverage per rule:", cov.cpu().numpy())
+    # Klassenmatrix
+    Y_onehot = F.one_hot(y, model.num_classes).float().to(fire)
+    print("Y_onehot shape:", Y_onehot.shape)
+    
+    mass = fire.T @ Y_onehot                # [R,C]
+    p_rc = mass / mass.sum(1, keepdim=True).clamp_min(1e-9)
+    entropy = -(p_rc * p_rc.log()).sum(1) / np.log(model.num_classes)
+    gini    = 1 - (p_rc**2).sum(1)
+
+    # Mutual Information (Binary activation vs. Class)
+    act = (fire > 0.1).float()                 # [N,R]
+    mi = []
+    for r in range(model.num_rules):
+        mi.append( mutual_info_score(act[:,r].cpu(), y.cpu()) )
+    mi = torch.tensor(mi, device=fire.device)
+
+    return cov, entropy, mi

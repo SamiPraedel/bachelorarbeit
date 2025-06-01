@@ -16,10 +16,11 @@ def train_popfnn(model, Xtr, ytr, epochs=5, lr=1e-3):
     #initialize_mfs_with_fcm(model, Xtr)
     model.pop_init(Xtr, ytr)              
 
-    dl = torch.utils.data.DataLoader(
-        torch.utils.data.TensorDataset(Xtr, Ytr),
-        batch_size=1024, shuffle=True, pin_memory=False)
 
+    dl = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(Xtr, ytr),
+        batch_size=256, shuffle=True, pin_memory=False)
+    
     scaler = GradScaler()
     loss_fn = nn.CrossEntropyLoss()
     opt = torch.optim.Adam(model.parameters(), lr=1e-3)
@@ -41,7 +42,7 @@ def train_popfnn(model, Xtr, ytr, epochs=5, lr=1e-3):
     
         if epoch % 10 == 0:
             print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
-            #print(model.R)
+            print(model.R)
 
     return model         
 
@@ -67,32 +68,67 @@ def train_popfnn_ssl(X_l, y_l, X_p, y_p, w_p,
         opt.step()
     return model
 
+import torch
+from sklearn.metrics import silhouette_score
+import numpy as np
+
+# Make sure your POPFNN class definition is available in the scope
+# from PopFnn import POPFNN # Or however you import it
+
+def calculate_popfnn_silhouette(model: POPFNN, X_data_tensor: torch.Tensor):
+    """
+    Calculates the Silhouette Score for the clusters formed by POPFNN's predictions.
+
+    The Silhouette Score measures how similar a sample is to its own predicted class
+    (cohesion) compared to other classes (separation).
+
+    Args:
+        model (POPFNN): The trained POPFNN model.
+        X_data_tensor (torch.Tensor): The input data (features) as a PyTorch tensor.
+                                      This should be the data for which you want
+                                      to evaluate cluster separation (e.g., X_test or X_train).
+
+    Returns:
+        float or None: The average Silhouette Score over all samples, or None if
+                       it cannot be computed (e.g., if only one class is predicted
+                       or an error occurs).
+    """
+    model.eval()  # Set the model to evaluation mode
+    device = next(model.parameters()).device  # Get the model's device
+    X_data_tensor = X_data_tensor.to(device)
+
+    with torch.no_grad(): # Disable gradient calculations for inference
+        # Assuming the model outputs logits for classification
+        logits = model(X_data_tensor)
+        predicted_labels_tensor = logits.argmax(dim=1)
+
+    # Move data to CPU and convert to NumPy arrays for scikit-learn
+    # Note: If X_data_tensor is very large, ensure you have enough CPU RAM.
+    X_data_np = X_data_tensor.cpu().numpy()
+    predicted_labels_np = predicted_labels_tensor.cpu().numpy()
+
+    # The silhouette_score function requires at least 2 labels and at most n_samples-1 labels.
+    n_labels = len(np.unique(predicted_labels_np))
+    n_samples = X_data_np.shape[0]
+
+    if n_samples <= 1: # Cannot compute for a single sample or empty data
+        print("Silhouette score cannot be computed: Not enough samples.")
+        return None
+
+    if 2 <= n_labels < n_samples:
+        try:
+            score = silhouette_score(X_data_np, predicted_labels_np)
+            return score
+        except Exception as e:
+            print(f"An error occurred while calculating silhouette score: {e}")
+            return None
+    else:
+        print(f"Silhouette score cannot be computed. Number of unique predicted labels: {n_labels}. "
+              f"Required: 2 <= n_labels < n_samples ({n_samples}).")
+        return None
 
 
-if __name__ == "__main__":
-    print(f"Using device: {device}") # Now uses module-level device
-    #Xtr, Ytr, Xte, Yte = load_iris_data()
-    #Xtr, Ytr, Xte, Yte = load_Kp_chess_data_ord()
-    #Xtr, Ytr, Xte, Yte = load_Poker_data()
-    Xtr, Ytr, Xte, Yte = load_K_chess_data_splitted()
-    #Xtr, Ytr, Xte, Yte,_ = load_abalon_data()
-    
-    
-    Xtr = Xtr.to(device)     
-    Ytr = Ytr.to(device)  
-    Xte = Xte.to(device)  
-    Yte = Yte.to(device)
 
-
-    net  = POPFNN(d=Xtr.shape[1], C=torch.unique(Ytr).shape[0], num_mfs=3).to(device)        
-    net  = train_popfnn(net, Xtr, Ytr, epochs=1000) 
-
-    net.eval()                             
-    with torch.no_grad():
-        preds = net(Xte).argmax(dim=1)
-
-    acc = (preds == Yte).float().mean().item()
-    print(f"Test-Accuracy auf Iris: {acc*100:.2f}%")
 
 
     

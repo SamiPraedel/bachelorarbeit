@@ -65,9 +65,7 @@ class HybridANFIS(nn.Module):
         
         #norm_fs = firing_strengths / (firing_strengths.sum(dim=1, keepdim=True) + 1e-9)
         norm_fs = firing_s / (firing_s.sum(dim=1, keepdim=True) + 1e-9)
-        #norm_fs = firing_s
-        #print(norm_fs.shape)
-        #print(torch.count_nonzero(norm_fs))
+
         
         # 1) Bias anfügen – x_ext braucht selbst keine Gradienten
         ones   = x.new_ones(x.size(0), 1)
@@ -105,10 +103,12 @@ class HybridANFIS(nn.Module):
         batch_size = normalized_firing_strengths.size(0)
 
         Phi = normalized_firing_strengths.unsqueeze(2) * x_ext.unsqueeze(1)  # Shape: [batch_size, num_rules, input_dim + 1]
+        #print("Phi shape:", Phi.shape)
 
         Phi = Phi.view(batch_size, self.num_rules * (self.input_dim + 1))  # Flattened design matrix
+        #print("Phi flattened shape:", Phi.shape)
 
-        B = torch.linalg.lstsq(Phi, Y).solution
+        #B = torch.linalg.lstsq(Phi, Y).solution
         
         
         
@@ -133,14 +133,66 @@ class HybridANFIS(nn.Module):
 
         # Reshape in die Form der consequent Parameter: [num_rules, input_dim+1, num_classes]
         #self.consequents.data = B.view(self.num_rules, self.input_dim + 1, self.num_classes)
+    
+    # In HybridANFIS class:
+    def update_consequents_gem(self, normalized_firing_strengths: torch.Tensor, 
+                           x_ext: torch.Tensor, Y_onehot: torch.Tensor, 
+                           lambda_lse: float = 1e-3): # Added lambda_lse as a parameter
+        """
+        Update consequent parameters using Least Squares Estimation (LSE)
+        with Tikhonov regularization.
+        """
+        # normalized_firing_strengths: [batch_size, num_rules]
+        # x_ext: [batch_size, input_dim + 1] (already detached in training loop)
+        # Y_onehot: [batch_size, num_classes] (target outputs)
+
+        batch_size = normalized_firing_strengths.size(0)
+        
+        # Ensure data types are consistent, float32 is usually fine for LSE.
+        # If using AMP, inputs might be FP16, ensure they are FP32 before LSE if necessary.
+        norm_fs_f32 = normalized_firing_strengths.float()
+        x_ext_f32 = x_ext.float()
+        Y_onehot_f32 = Y_onehot.float()
+
+        # Phi: [batch_size, num_rules, input_dim + 1]
+        Phi_expanded = norm_fs_f32.unsqueeze(2) * x_ext_f32.unsqueeze(1)
+        
+        # Phi_flat: [batch_size, num_rules * (input_dim + 1)]
+        Phi_flat = Phi_expanded.view(batch_size, self.num_rules * (self.input_dim + 1))
+
+        # Perform LSE with Tikhonov regularization
+        # Note: Phi_flat and Y_onehot_f32 must be on the same device
+        # This block is already under torch.no_grad() in the training loop
+        
+        # A = Phi_flat.T @ Phi_flat
+        A = torch.matmul(Phi_flat.T, Phi_flat)
+        
+        # b = Phi_flat.T @ Y_onehot_f32
+        b = torch.matmul(Phi_flat.T, Y_onehot_f32)
+
+        # Add regularization: A + lambda * I
+        I = torch.eye(A.size(0), device=A.device, dtype=A.dtype)
+        A_reg = A + lambda_lse * I
+        
+        try:
+            # Solve (A + lambda*I) * Beta = b for Beta
+            Beta_flat = torch.linalg.solve(A_reg, b) # Shape: [num_rules * (input_dim + 1), num_classes]
+        except torch.linalg.LinAlgError as e:
+            print(f"LSE failed: {e}. Using pseudo-inverse.")
+            # Fallback to pseudo-inverse if solve fails (e.g. singular matrix even with regularization)
+            A_reg_pinv = torch.linalg.pinv(A_reg)
+            Beta_flat = torch.matmul(A_reg_pinv, b)
+
+
+        # Reshape Beta into the consequents' shape
+        # Beta shape: [num_rules, input_dim + 1, num_classes]
+        Beta = Beta_flat.view(self.num_rules, self.input_dim + 1, self.num_classes)
+
+        # Update model consequents
+        self.consequents.data.copy_(Beta)
         
     @torch.no_grad()
     def _forward_mf_only(self, x):
-        """
-        Liefert reine Regel‑Firing‑Stärken (vor Normalisierung).
-        x : Tensor [B, input_dim]  (bereits auf dem gleichen Gerät wie die MFs)
-        Rückgabe: Tensor [B, num_rules]
-        """
         # -- 1. MF‑Grade je Feature & MF --
         x_exp   = x.unsqueeze(2)                  # [B, d, 1]
         centers = self.centers.unsqueeze(0)       # [1, d, m]
@@ -155,6 +207,18 @@ class HybridANFIS(nn.Module):
         # -- 3. Firing‑Stärke je Regel (Produkt über Features) --
         firing = rule_mfs.prod(dim=1)                                        # [B, R]
         return firing
+    
+    def _fuzzify(self, x):
+        """
+        Fuzzify the input data x using the membership functions.
+        Returns:
+            μ: Tensor of shape [B, d, M] where B is batch size, d is input dimension, M is number of MFs.
+        """
+        x_exp = x.unsqueeze(2)
+        centers = self.centers.unsqueeze(0)
+        widths = self.widths.unsqueeze(0)
+        μ = torch.exp(-((x_exp - centers) ** 2) / (2 * widths ** 2) + 1e-9)
+        return μ
 
 
 

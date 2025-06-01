@@ -1,55 +1,7 @@
-Dataset   ,Model       ,SSL_Meth    ,Lab_Frac    ,T_Acc     ,S_Acc     ,Sil_Firing_True
-Iris      ,HybridANFIS ,teacher     ,10          ,96.67     ,96.67     ,0.2627         
-Iris      ,HybridANFIS ,teacher     ,20          ,96.67     ,100.00    ,0.1419         
-Iris      ,HybridANFIS ,teacher     ,50          ,100.00    ,96.67     ,0.4450         
-Iris      ,POPFNN      ,teacher     ,10          ,96.67     ,96.67     ,N/A            
-Iris      ,POPFNN      ,teacher     ,20          ,96.67     ,100.00    ,N/A            
-Iris      ,POPFNN      ,teacher     ,50          ,100.00    ,100.00    ,N/A            
-Iris      ,RFBaseline  ,RF_Supervised,10          ,N/A       ,96.67     ,N/A            
-Iris      ,RFBaseline  ,RF_Supervised,20          ,N/A       ,96.67     ,N/A            
-Iris      ,RFBaseline  ,RF_Supervised,50          ,N/A       ,100.00    ,N/A            
-Iris      ,LabelProp   ,LabelProp   ,10          ,N/A       ,96.67     ,N/A            
-Iris      ,LabelProp   ,LabelProp   ,20          ,N/A       ,100.00    ,N/A            
-Iris      ,LabelProp   ,LabelProp   ,50          ,N/A       ,100.00    ,N/A            
-Iris      ,HybridANFIS ,rule_based  ,10          ,N/A       ,90.00     ,0.1565         
-Iris      ,HybridANFIS ,rule_based  ,20          ,N/A       ,96.67     ,0.3756         
-Iris      ,HybridANFIS ,rule_based  ,50          ,N/A       ,96.67     ,0.2320         
-Iris      ,POPFNN      ,rule_based  ,10          ,N/A       ,96.67     ,N/A            
-Iris      ,POPFNN      ,rule_based  ,20          ,N/A       ,100.00    ,N/A            
-Iris      ,POPFNN      ,rule_based  ,50          ,N/A       ,100.00    ,N/A            
-K_Chess   ,HybridANFIS ,teacher     ,10          ,53.67     ,22.24     ,-0.5448        
-K_Chess   ,HybridANFIS ,teacher     ,20          ,61.46     ,26.15     ,-0.5425        
-K_Chess   ,HybridANFIS ,teacher     ,50          ,73.15     ,33.65     ,-0.5441        
-K_Chess   ,POPFNN      ,teacher     ,10          ,53.67     ,37.70     ,N/A            
-K_Chess   ,POPFNN      ,teacher     ,20          ,61.46     ,42.84     ,N/A            
-K_Chess   ,POPFNN      ,teacher     ,50          ,73.15     ,50.89     ,N/A            
-K_Chess   ,RFBaseline  ,RF_Supervised,10          ,N/A       ,53.17     ,N/A            
-K_Chess   ,RFBaseline  ,RF_Supervised,20          ,N/A       ,60.90     ,N/A            
-K_Chess   ,RFBaseline  ,RF_Supervised,50          ,N/A       ,72.57     ,N/A            
-K_Chess   ,LabelProp   ,LabelProp   ,10          ,N/A       ,42.21     ,N/A            
-K_Chess   ,LabelProp   ,LabelProp   ,20          ,N/A       ,48.96     ,N/A            
-K_Chess   ,LabelProp   ,LabelProp   ,50          ,N/A       ,59.74     ,N/A            
-K_Chess   ,HybridANFIS ,rule_based  ,10          ,N/A       ,23.17     ,-0.5445        
-K_Chess   ,HybridANFIS ,rule_based  ,20          ,N/A       ,26.59     ,-0.5427        
-K_Chess   ,HybridANFIS ,rule_based  ,50          ,N/A       ,33.49     ,-0.5424        
-K_Chess   ,POPFNN      ,rule_based  ,10          ,N/A       ,37.00     ,N/A            
-K_Chess   ,POPFNN      ,rule_based  ,20          ,N/A       ,41.64     ,N/A            
-K_Chess   ,POPFNN      ,rule_based  ,50          ,N/A       ,50.83     ,N/A            
-Heart     ,HybridANFIS ,teacher     ,10          ,79.12     ,74.73     ,0.0182         
-Heart     ,HybridANFIS ,teacher     ,20          ,83.52     ,76.92     ,0.0072         
-Heart     ,HybridANFIS ,teacher     ,50          ,86.81     ,76.92     ,0.0137         
-Heart     ,POPFNN      ,teacher     ,10          ,79.12     ,56.04     ,N/A            
-Heart     ,POPFNN      ,teacher     ,20          ,83.52     ,57.14     ,N/A            
-Heart     ,POPFNN      ,teacher     ,50          ,86.81     ,64.84     ,N/A            
-Heart     ,RFBaseline  ,RF_Supervised,10          ,N/A       ,79.12     ,N/A            
-Heart     ,RFBaseline  ,RF_Supervised,20          ,N/A       ,83.52     ,N/A            
-Heart     ,RFBaseline  ,RF_Supervised,50          ,N/A       ,84.62     ,N/A            
-Heart     ,LabelProp   ,LabelProp   ,10          ,N/A       ,73.63     ,N/A            
-Heart     ,LabelProp   ,LabelProp   ,20          ,N/A       ,73.63     ,N/A            
-Heart     ,LabelProp   ,LabelProp   ,50          ,N/A       ,78.02     ,N/A            
-Heart     ,HybridANFIS ,rule_based  ,10          ,N/A       ,52.75     ,-0.0201        
-Heart     ,HybridANFIS ,rule_based  ,20          ,N/A       ,75.82     ,0.0116         
-Heart     ,HybridANFIS ,rule_based  ,50          ,N/A       ,81.32     ,0.0302         
-Heart     ,POPFNN      ,rule_based  ,10          ,N/A       ,56.04     ,N/A            
-Heart     ,POPFNN      ,rule_based  ,20          ,N/A       ,60.44     ,N/A            
-Heart     ,POPFNN      ,rule_based  ,50          ,N/A       ,62.64     ,N/A            
+Dataset   ,Model       ,SSL_Meth      ,Lab_Frac    ,T_Acc     ,S_Acc     ,Sil_Firing_True
+K_Chess   ,HybridANFIS ,rule_based    ,10          ,N/A       ,25.03     ,-0.5469        
+K_Chess   ,HybridANFIS ,rule_based    ,20          ,N/A       ,28.13     ,-0.5468        
+K_Chess   ,HybridANFIS ,rule_based    ,50          ,N/A       ,33.97     ,-0.5469        
+K_Chess   ,POPFNN      ,rule_based    ,10          ,N/A       ,38.59     ,N/A            
+K_Chess   ,POPFNN      ,rule_based    ,20          ,N/A       ,40.83     ,N/A            
+K_Chess   ,POPFNN      ,rule_based    ,50          ,N/A       ,47.05     ,N/A            
