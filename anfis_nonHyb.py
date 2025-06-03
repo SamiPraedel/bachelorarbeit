@@ -31,7 +31,7 @@ class NoHybridANFIS(nn.Module):
                     size=(max_rules, self.input_dim))
             self.num_rules = max_rules
 
-        self.zeroG = False
+        self.zeroG = True
 
         if self.zeroG:
             self.consequents = nn.Parameter(torch.rand(self.num_rules, num_classes))
@@ -73,7 +73,7 @@ class NoHybridANFIS(nn.Module):
 
         fiering_strengths = torch.prod(rule_mfs, dim=1)  #[batch_size, num_rules]        
         
-        topk_p = 0.1
+        topk_p = 1
 
         K = max(1, int(topk_p * self.num_rules))
         vals, idx = torch.topk(fiering_strengths, k=K, dim=1)

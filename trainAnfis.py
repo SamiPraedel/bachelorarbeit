@@ -13,12 +13,21 @@ from collections import Counter
 # Assuming these files are in the Python path or same directory
 from anfis_hybrid import HybridANFIS
 from anfis_nonHyb import NoHybridANFIS
-from anfisHelper import initialize_mfs_with_kmeans, initialize_mfs_with_fcm, set_rule_subset
+from anfisHelper import initialize_mfs_with_kmeans, initialize_mfs_with_fcm, set_rule_subset, create_weighted_sampler # Removed incomplete import
+from visualizers import plot_epoch_curves # Added specific import for plotting
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 @profile
-def train_anfis_noHyb(model, X, Y, num_epochs, lr, dataloader):
+def train_anfis_noHyb(
+    model: NoHybridANFIS, 
+    X: torch.Tensor, 
+    Y: torch.Tensor, 
+    num_epochs: int, 
+    lr: float,
+    X_val: torch.Tensor = None, 
+    y_val: torch.Tensor = None
+):
     model.to(device)
     
     initialize_mfs_with_kmeans(model, X)  # X_train as np array
@@ -31,15 +40,25 @@ def train_anfis_noHyb(model, X, Y, num_epochs, lr, dataloader):
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.3)
     criterion = nn.CrossEntropyLoss()
     
+    #dataloader = create_weighted_sampler(X, Y, batch_size=1024)
     trainset = torch.utils.data.TensorDataset(X, Y)
-    #dataloader = dataloader
-    dataloader = DataLoader(trainset, batch_size=128, shuffle=True)
+    dataloader = DataLoader(trainset, batch_size=128, num_workers=0, shuffle=True)
     
-    losses = []
-    for epoch in range(1, num_epochs + 1):
+    # Use the dataloader passed as an argument
+    # Initialize history dictionary to store metrics
+    history = {"train_loss": [], "train_acc": []}
+    if X_val is not None and y_val is not None:
+        history["val_loss"] = []
+        history["val_acc"] = []
+        X_val, y_val = X_val.to(device), y_val.to(device)
 
+    for epoch in range(1, num_epochs + 1):
         epoch_loss = 0.0
+        correct_train = 0
+        total_train = 0
+
         for batch_X, batch_Y in dataloader:
+            model.train() # Ensure model is in training mode
             batch_X = batch_X.to(device, non_blocking=True)
             batch_Y = batch_Y.to(device, non_blocking=True)
             outputs, firing_strengths, mask = model(batch_X)  # outputs: [batch_size, num_classes]
@@ -54,16 +73,46 @@ def train_anfis_noHyb(model, X, Y, num_epochs, lr, dataloader):
             model.widths.data.clamp_(min=0.2, max=0.8)
             model.centers.data.clamp_(min=0, max=1)
 
-        #scheduler.step()
+            # Accumulate loss for the epoch (inside batch loop)
+            epoch_loss += loss.item() # Use .item() here as loss is a tensor
+            
+            # Training accuracy
+            _, predicted_train = torch.max(outputs.data, 1)
+            total_train += batch_Y.size(0)
+            correct_train += (predicted_train == batch_Y).sum().item()
 
-        epoch_loss += loss.item()
+        # --- Code moved outside the batch loop ---
+        #scheduler.step() # If uncommented, should be here
+
+        # Calculate average loss for the epoch (outside batch loop)
         avg_loss = epoch_loss / len(dataloader)
-        losses.append(avg_loss)
-       
-        if (epoch+1) % 10 == 0:
-            print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.4f}")
-    
-    # 1) Regeln mit cov < 0.2 % des Gesamtfeuers löschen
+        history["train_loss"].append(avg_loss)
+        train_accuracy = 100 * correct_train / total_train
+        history["train_acc"].append(train_accuracy)
+
+        # Validation step
+        if X_val is not None and y_val is not None:
+            model.eval() # Set model to evaluation mode
+            with torch.no_grad():
+                val_outputs, _, _ = model(X_val)
+                val_loss = criterion(val_outputs, y_val)
+                history["val_loss"].append(val_loss.item())
+
+                _, predicted_val = torch.max(val_outputs.data, 1)
+                total_val = y_val.size(0)
+                correct_val = (predicted_val == y_val).sum().item()
+                val_accuracy = 100 * correct_val / total_val
+                history["val_acc"].append(val_accuracy)
+            model.train() # Set back to training mode
+
+        # Print epoch progress (outside batch loop)
+        if epoch % 10 == 0: # Use epoch directly for 1-based indexing check
+            log_msg = f"Epoch [{epoch}/{num_epochs}], Train Loss: {avg_loss:.4f}, Train Acc: {train_accuracy:.2f}%"
+            if X_val is not None and y_val is not None:
+                log_msg += f", Val Loss: {val_loss.item():.4f}, Val Acc: {val_accuracy:.2f}%"
+            print(log_msg)
+
+    # Optional: Rule pruning example (ensure 'cov' is defined if uncommented)
     # cov_thr = 0.002
     # cov_rel = cov / cov.sum()              # cov aus rule_stats
     # keep    = cov_rel > cov_thr
@@ -72,18 +121,39 @@ def train_anfis_noHyb(model, X, Y, num_epochs, lr, dataloader):
     # model.consequents  = nn.Parameter(model.consequents[keep])
     # model.num_rules    = keep.sum().item()
     
+    # ----- Plot training loss after training -----
+    fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+    plot_epoch_curves(history, "loss", ax=axes[0], smooth=3)
+    axes[0].set_title(f"Loss Curves for {model.__class__.__name__} (NoHybrid)")
+    plot_epoch_curves(history, "acc", ax=axes[1], smooth=3)
+    axes[1].set_title(f"Accuracy Curves for {model.__class__.__name__} (NoHybrid)")
+    plt.tight_layout()
     
+    viz_dir = "visualizations"
+    os.makedirs(viz_dir, exist_ok=True)
+    plot_save_path = os.path.join(viz_dir, f"{model.__class__.__name__}_NoHybrid_training_curves.png")
+    plt.savefig(plot_save_path)
+    plt.close()
+    print(f"Training curves saved to {plot_save_path}")
 
 
 
 @profile
-def train_anfis_hybrid(model, X, Y, num_epochs, lr):
+def train_anfis_hybrid(
+    model: HybridANFIS, 
+    X: torch.Tensor, 
+    Y: torch.Tensor, 
+    num_epochs: int, 
+    lr: float, # Note: lr is used for optimizer for MFs
+    X_val: torch.Tensor = None, 
+    y_val: torch.Tensor = None
+):
     model.to(device)
     
     initialize_mfs_with_kmeans(model, X)
     #initialize_mfs_with_fcm(model, X)
-    model.widths.data *= 1.8                     # grob verdoppeln
-    model.widths.data.clamp_(min=0.06, max=0.9) 
+    # model.widths.data *= 1.8                    # grob verdoppeln
+    # model.widths.data.clamp_(min=0.06, max=0.9) 
     
     model.train()
     scaler = GradScaler()
@@ -114,15 +184,24 @@ def train_anfis_hybrid(model, X, Y, num_epochs, lr):
     # Only optimize membership function params with an optimizer
     optimizer = optim.Adam([model.centers, model.widths], lr=1e-2)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=40, gamma=0.3)
-
+    
     trainset = torch.utils.data.TensorDataset(X, Y)
     dataloader = DataLoader(trainset, batch_size=128, num_workers=0, shuffle=True)
     N, P = X.shape
-    k = int(N * 0.1)
+    k = int(N * 0.6)
     
-    losses = []
+    # Initialize history dictionary to store metrics
+    history = {"train_loss": [], "train_acc": []}
+    if X_val is not None and y_val is not None:
+        history["val_loss"] = []
+        history["val_acc"] = []
+        X_val, y_val = X_val.to(device), y_val.to(device)
+
     for epoch in range(num_epochs):
+        model.train() # Ensure model is in training mode
         epoch_loss = 0.0
+        correct_train = 0
+        total_train = 0
         with torch.no_grad():
             indices = torch.randperm(N)[:k]
             
@@ -135,6 +214,7 @@ def train_anfis_hybrid(model, X, Y, num_epochs, lr):
                     Y_onehot
                 )
         for batch_X, batch_Y in dataloader:
+            model.train() # Ensure model is in training mode for MF optimization
             batch_X = batch_X.to(device, non_blocking=True)
             batch_Y = batch_Y.to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
@@ -146,16 +226,52 @@ def train_anfis_hybrid(model, X, Y, num_epochs, lr):
             model.widths.data.clamp_(min=0.2, max=0.8)
             model.centers.data.clamp_(min=0, max=1)
             
+            epoch_loss += loss.item()
+            _, predicted_train = torch.max(outputs.data, 1)
+            total_train += batch_Y.size(0)
+            correct_train += (predicted_train == batch_Y).sum().item()
+            
         scheduler.step()
         
-
-        epoch_loss += loss.item()
         avg_loss = epoch_loss / len(dataloader)
-        losses.append(avg_loss)
+        history["train_loss"].append(avg_loss)
+        train_accuracy = 100 * correct_train / total_train
+        history["train_acc"].append(train_accuracy)
+
+        # Validation step
+        if X_val is not None and y_val is not None:
+            model.eval() # Set model to evaluation mode
+            with torch.no_grad():
+                val_outputs, _, _ = model(X_val)
+                val_loss = criterion(val_outputs, y_val)
+                history["val_loss"].append(val_loss.item())
+
+                _, predicted_val = torch.max(val_outputs.data, 1)
+                total_val = y_val.size(0)
+                correct_val = (predicted_val == y_val).sum().item()
+                val_accuracy = 100 * correct_val / total_val
+                history["val_acc"].append(val_accuracy)
+            model.train() # Set back to training mode for LSE and MF opt in next epoch
 
         if (epoch) % 10 == 0:
-            print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {avg_loss:.6f}")
-            
+            log_msg = f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {avg_loss:.6f}, Train Acc: {train_accuracy:.2f}%"
+            if X_val is not None and y_val is not None:
+                log_msg += f", Val Loss: {val_loss.item():.4f}, Val Acc: {val_accuracy:.2f}%"
+            print(log_msg)
+
+    # ----- Plot training loss after training -----
+    fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+    plot_epoch_curves(history, "loss", ax=axes[0], smooth=3)
+    axes[0].set_title(f"Loss Curves for {model.__class__.__name__} (Hybrid)")
+    plot_epoch_curves(history, "acc", ax=axes[1], smooth=3)
+    axes[1].set_title(f"Accuracy Curves for {model.__class__.__name__} (Hybrid)")
+    plt.tight_layout()
+    viz_dir = "visualizations"
+    os.makedirs(viz_dir, exist_ok=True)
+    plot_save_path = os.path.join(viz_dir, f"{model.__class__.__name__}_Hybrid_training_curves.png")
+    plt.savefig(plot_save_path)
+    plt.close()
+    print(f"Training curves saved to {plot_save_path}")
 
 def train_hybrid_anfis_ssl(X_l, y_l, X_p, y_p, w_p,
                            input_dim, num_classes,

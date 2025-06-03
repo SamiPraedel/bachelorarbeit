@@ -6,6 +6,8 @@ import skfuzzy as fuzz
 from torch import nn
 from sklearn.metrics import mutual_info_score
 import torch.nn.functional as F
+from torch.utils.data import DataLoader, TensorDataset, WeightedRandomSampler
+import numpy as np, torch
 
 def initialize_mfs_with_kmeans(model, data):
     """
@@ -151,3 +153,74 @@ def rule_stats(model, X, y):
     mi = torch.tensor(mi, device=fire.device)
 
     return cov, entropy, mi
+
+def rule_stats_wta(model, X, y, topk=1):
+    """
+    Winner-Takes-All-Statistik:
+    - Sample wird jenen top-k Regeln gutgeschrieben, die am stärksten feuern.
+    - Rückgabe: cov, H (Entropie)  [R]
+    """
+    fire = model._forward_mf_only(X)                       # [N,R]
+    B, R = fire.shape
+    top_val, top_idx = torch.topk(fire, k=topk, dim=1)   # [N,k]
+
+    # 0-1 Indikator, welche Regel das Sample "besitzt"
+    wta_mask = torch.zeros_like(fire).scatter_(1, top_idx, 1.)
+
+    cov = wta_mask.sum(0).float()               # wie oft Regel Gewinner ist
+
+    onehot = F.one_hot(y, model.num_classes).float().to(fire)
+    mass   = wta_mask.T @ onehot               # [R,C] Gewinner‐Masse
+    p_rc   = mass / mass.sum(1, keepdim=True).clamp_min(1e-9)
+    H      = -(p_rc * p_rc.log()).sum(1) / np.log(model.num_classes)  # Entropie pro Regel
+    return cov, H
+
+
+def per_class_rule_scores(model, X, y, k_wta=3):
+    """
+    Liefert für jede Regel r:
+       cov_r         – Gewinner-Coverage
+       main_class_r  – Klasse mit größtem Anteil
+       p_rc          – Reinheit der Hauptklasse
+       score_rc      – cov * p
+    """
+    fire = model._forward_mf_only(X)                         # [N,R]
+    top_idx = fire.topk(k_wta, dim=1).indices     # Gewinner-Regeln
+    mask    = torch.zeros_like(fire).scatter_(1, top_idx, 1.)
+
+    cov = mask.sum(0).float()                     # [R]
+
+    onehot = F.one_hot(y, model.num_classes).float().to(fire)
+    mass   = mask.T @ onehot                      # [R,C] Gewinner-Masse
+    p_rc   = mass / mass.sum(1, keepdim=True).clamp_min(1e-9)
+
+    main_cls = p_rc.argmax(1)                     # [R]
+    purity   = p_rc.max(1).values                 # [R]
+
+    score    = cov * purity                       # [R]  (= S_{r,main})
+    return cov, purity, main_cls, score, p_rc
+
+
+
+def create_weighted_sampler(X_np, y_np, batch_size, device="cpu"):
+    y_np = np.asarray(y_np)                      # sicher numpy
+    class_cnt = np.bincount(y_np)
+    # vermeidet Division durch 0
+    class_cnt[class_cnt == 0] = 1
+    weights = 1.0 / class_cnt[y_np]
+
+    sampler = WeightedRandomSampler(
+        weights=torch.tensor(weights, dtype=torch.float32),
+        num_samples=len(y_np),
+        replacement=True)
+
+    ds = TensorDataset(torch.as_tensor(X_np, dtype=torch.float32),
+                       torch.as_tensor(y_np, dtype=torch.long))
+
+    loader = DataLoader(ds,
+                        batch_size=min(batch_size, len(ds)),
+                        sampler=sampler,
+                        drop_last=False)
+    return loader
+
+

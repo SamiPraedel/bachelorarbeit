@@ -5,7 +5,7 @@ import torch, torch.nn as nn, torch.optim as optim
 import torch.nn.functional as F # Added import
 from PopFnn import POPFNN
 from torch.cuda.amp import autocast, GradScaler
-from data_utils import load_iris_data, load_heart_data, load_wine_data, load_abalon_data, load_Kp_chess_data, load_K_chess_data_splitted, load_K_chess_data_OneHot, load_Poker_data, load_Kp_chess_data_ord
+from data_utils import load_iris_data, load_heart_data, load_wine_data, load_abalon_data, load_Kp_chess_data, load_K_chess_data_splitted, load_K_chess_data_OneHot, load_poker_data, load_Kp_chess_data_ord
 from anfisHelper import initialize_mfs_with_kmeans, initialize_mfs_with_fcm, set_rule_subset
 
 

@@ -52,7 +52,6 @@ class POPFNN(nn.Module):
 
             # fire shape: [B, R]
 
-            # --- EVALUATION PATH (Fastest, Low-Memory, Non-Differentiable) ---
             if not self.training:
                 # This path is unchanged. It's already fast and memory-efficient for evaluation.
                 w_view = self.W.view(self.R, self.C, self.M)

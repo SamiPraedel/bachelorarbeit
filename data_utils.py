@@ -13,57 +13,142 @@ import matplotlib.pyplot as plt
 import os
 import seaborn as sns
 from sklearn.cluster import KMeans
+from imblearn.under_sampling import RandomUnderSampler
+from imblearn.over_sampling import RandomOverSampler
 import umap.umap_ as umap
 
-def load_Poker_data(test_size=0.3, random_state=42):
+# poker_loader.py
+# ----------------------------------------------------------
+import numpy as np, pandas as pd, torch
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+from torch.utils.data import TensorDataset, WeightedRandomSampler
+from ucimlrepo import fetch_ucirepo        # <- falls du uciml-repo nutzt
+
+def load_poker_data(test_size=0.3, max_samples=90000,
+                    scale_numeric=True, random_state=42):
+
+    # ---------- 1) Laden + optional begrenzen ----------------------------
+    ds  = fetch_ucirepo(id=158)
+    Xdf = ds.data.features.copy()
+    y   = ds.data.targets.squeeze().to_numpy()
+
+    if len(Xdf) > max_samples:
+        Xdf, _, y, _ = train_test_split(
+            Xdf, y, train_size=max_samples, stratify=y, # y here is the original full y
+            random_state=random_state)
+        # After this, Xdf and y are the sampled versions.
+
+    # Filter out classes with fewer than 2 instances from the (potentially sampled) y
+    # This is done BEFORE the main train/test split to prevent the ValueError
+    unique_classes_in_y, counts_in_y = np.unique(y, return_counts=True)
+    classes_to_remove = unique_classes_in_y[counts_in_y < 2]
+
+    if len(classes_to_remove) > 0:
+        counts_of_removed_classes = counts_in_y[counts_in_y < 2]
+        print(f"Warning: Poker dataset (after sampling to {max_samples} if active): "
+              f"Removing samples from classes with < 2 instances. "
+              f"Classes removed: {classes_to_remove}. "
+              f"Their counts were: {counts_of_removed_classes}.")
+        
+        # Create a boolean mask to keep only samples from classes with >= 2 instances
+        keep_mask = ~np.isin(y, classes_to_remove)
+        
+        Xdf = Xdf[keep_mask]
+        y = y[keep_mask]
+
+        if len(y) == 0:
+            raise ValueError("Poker dataset: After removing classes with < 2 instances, no data remains.")
+        
+        # Update unique_classes_in_y after filtering for the next check
+        unique_classes_in_y = np.unique(y) 
+        if len(unique_classes_in_y) < 2 and len(y) > 0:
+            print(f"Warning: Poker dataset: After filtering, only {len(unique_classes_in_y)} class(es) remain. "
+                  "Stratification in the final train/test split will be disabled.")
+
+    # ---------- 2) Skalieren (nur Rang-Spalten) --------------------------
+    if scale_numeric:
+        # Correctly identify rank columns (e.g., C1, C2, ..., C5 for Poker Hand dataset)
+        # These columns represent the rank of the cards.
+        rank_cols = [col for col in Xdf.columns if col.startswith('C')]
+        if rank_cols: # Ensure rank_cols is not empty before attempting to scale
+            scaler = MinMaxScaler()
+            Xdf[rank_cols] = scaler.fit_transform(Xdf[rank_cols])
+        else:
+            print("Warning: No rank columns (starting with 'C') found for scaling in Poker dataset. Skipping scaling of rank columns.")
+
+    X_np = Xdf.to_numpy(dtype=np.float32)
+
+    # ---------- 3) Train/Test-Split -------------------------------------
+    # The 'y' here is now the filtered y.
+    if len(y) == 0: # Should be caught by the earlier check, but as a safeguard
+        raise ValueError("Poker dataset: 'y' is empty before final train/test split.")
+    
+    can_stratify = len(np.unique(y)) >= 2
+
+    if can_stratify:
+        X_tr, X_te, y_tr, y_te = train_test_split(
+            X_np, y, test_size=test_size,
+            stratify=y, random_state=random_state)
+    else: # Not enough unique classes to stratify (e.g., only 0 or 1 class left)
+        X_tr, X_te, y_tr, y_te = train_test_split(
+            X_np, y, test_size=test_size, random_state=random_state) # No stratify
+
+    # ---------- 5) Torch-Tensoren ---------------------------------------
+    X_tr = torch.as_tensor(X_tr, dtype=torch.float32)
+    y_tr = torch.as_tensor(y_tr, dtype=torch.long)
+
+    X_te = torch.as_tensor(X_te, dtype=torch.float32)
+    y_te = torch.as_tensor(y_te, dtype=torch.long)
+
+    return X_tr, y_tr, X_te, y_te
+
+def load_shuttle_data(test_size=0.3, random_state=42):
+  
     # fetch dataset 
-    poker_hand = fetch_ucirepo(id=158) 
+    statlog_shuttle = fetch_ucirepo(id=148) 
     
     # data (as pandas dataframes) 
-    X = poker_hand.data.features 
-    y = poker_hand.data.targets
+    X_df = statlog_shuttle.data.features 
+    y_df = statlog_shuttle.data.targets # y_df is a DataFrame
+     
+    scaler = MinMaxScaler()
+    # X_processed_np will be a NumPy array
+    X_processed_np = scaler.fit_transform(X_df) 
+    
+    # Ensure X_processed_np is float32
+    X_processed_np = X_processed_np.astype(np.float32)
+    
+    # Convert y_df (DataFrame) to a 1D NumPy array for y_for_split_np
+    y_for_split_np = y_df.to_numpy().squeeze()
+    # Convert 1-indexed labels (1-7) to 0-indexed labels (0-6)
+    y_for_split_np = y_for_split_np - 1
+    
+    # Now, X_processed_np and y_for_split_np are both NumPy arrays.
+    # So, y_train_np and y_test_np will also be NumPy arrays.
+    X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
+        X_processed_np, y_for_split_np, 
+        test_size=test_size, 
+        shuffle=True, 
+        random_state=random_state,
+        stratify=y_for_split_np # Stratification is good for imbalanced datasets
+    )
+    
+    # Convert NumPy arrays to PyTorch tensors
+    X_train = torch.tensor(X_train_np, dtype=torch.float32)
+    y_train = torch.tensor(y_train_np, dtype=torch.long) # This will now work
+    X_test  = torch.tensor(X_test_np, dtype=torch.float32)
+    y_test  = torch.tensor(y_test_np, dtype=torch.long)  # This will now work
+    
+    return X_train, y_train, X_test, y_test
+
+
+    
+    
     
     
 
-    
-    scaler = MinMaxScaler()
-    x_scaled = scaler.fit_transform(X)
-    
-    if isinstance(y, pd.DataFrame):
-        y = y.to_numpy().squeeze()
-    
-    # Aufteilen in Trainings- und Testdaten
-    X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
-        x_scaled, y, test_size=test_size, shuffle=True, random_state=random_state
-    )
-    
-    
-    # Eventuelle NaN-Werte ersetzen
-    X_train_np = np.nan_to_num(X_train_np, nan=0.0)
-    X_test_np  = np.nan_to_num(X_test_np,  nan=0.0)
-    
-    # Konvertiere in PyTorch-Tensoren
-    X_train = torch.tensor(X_train_np, dtype=torch.float32)
-    y_train = torch.tensor(y_train_np, dtype=torch.long)
-    X_test  = torch.tensor(X_test_np, dtype=torch.float32)
-    y_test  = torch.tensor(y_test_np, dtype=torch.long)
-    
-    
-    # X_train = torch.narrow(X_train, 0, 0, 30000)
-    # y_train = torch.narrow(y_train, 0, 0, 30000)
-    X_test = torch.narrow(X_test, 0, 0, 6000)
-    y_test = torch.narrow(y_test, 0, 0, 6000)
-    
-    #print(torch.unique(y_test))
-    #print(torch.bincount(y_test))
-    
-    #print(torch.unique(y_train))
-    #print(torch.bincount(y_train))
-    
-    #print("y_train shape:", y_train.shape)
-    
-    #return X_train, y_train, X_test, y_test
-    return X_train, y_train, X_test, y_test
+
 
 def load_K_chess_data_splitted(test_size=0.3, random_state=42):
     
@@ -418,6 +503,45 @@ def load_Kp_chess_data_ord(test_size=0.3, random_state=42):
 
 
 
+def load_gamma_data(test_size=0.3, random_state=42):
+    """
+    Loads and preprocesses the MAGIC Gamma Telescope dataset.
+    Features are scaled using MinMaxScaler.
+    Target labels ('g', 'h') are encoded to 0 and 1.
+    """
+    # Fetch dataset
+    magic_gamma_telescope = fetch_ucirepo(id=159) 
+    
+    # Data (as pandas dataframes) 
+    X_df = magic_gamma_telescope.data.features 
+    y_df = magic_gamma_telescope.data.targets # y_df is a DataFrame, e.g., shape (N, 1)
+     
+    # Preprocess features
+    scaler = MinMaxScaler()
+    X_processed_np = scaler.fit_transform(X_df) 
+    X_processed_np = X_processed_np.astype(np.float32)
+    
+    # Preprocess targets
+    # y_df.values.ravel() converts the DataFrame column to a 1D NumPy array
+    le = LabelEncoder()
+    y_encoded_np = le.fit_transform(y_df.values.ravel()) # Encodes 'g'/'h' to 0/1
+    
+    # Split data into training and testing sets
+    X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
+        X_processed_np, y_encoded_np, 
+        test_size=test_size, 
+        shuffle=True, 
+        random_state=random_state,
+        stratify=y_encoded_np # Stratification is good for classification
+    )
+    
+    # Convert NumPy arrays to PyTorch tensors
+    X_train = torch.tensor(X_train_np, dtype=torch.float32)
+    y_train = torch.tensor(y_train_np, dtype=torch.long)
+    X_test  = torch.tensor(X_test_np, dtype=torch.float32)
+    y_test  = torch.tensor(y_test_np, dtype=torch.long)
+    
+    return X_train, y_train, X_test, y_test
 
 
 
@@ -444,11 +568,157 @@ def load_iris_data(test_size=0.2, random_state=42):
     y_test  = torch.tensor(y_test_np,  dtype=torch.long)
 
     return X_train, y_train, X_test, y_test
+
+def visualize_data_umap(X, y, title="UMAP projection of the dataset", n_neighbors=15, min_dist=0.1, random_state=42):
+    """
+    Visualizes the dataset X colored by y using UMAP.
+
+    Args:
+        X (torch.Tensor or np.ndarray): Feature data.
+        y (torch.Tensor or np.ndarray): Label data.
+        title (str): Title for the plot.
+        n_neighbors (int): UMAP n_neighbors parameter.
+        min_dist (float): UMAP min_dist parameter.
+        random_state (int): Random state for UMAP.
+    """
+    if isinstance(X, torch.Tensor):
+        X_np = X.cpu().numpy()
+    else:
+        X_np = X
+    
+    if isinstance(y, torch.Tensor):
+        y_np = y.cpu().numpy()
+    else:
+        y_np = y
+
+    if X_np.shape[0] == 0:
+        print(f"Cannot visualize UMAP for '{title}': Input data X is empty.")
+        return
+    if y_np.shape[0] == 0:
+        print(f"Cannot visualize UMAP for '{title}': Input data y is empty.")
+        return
+    if X_np.shape[0] != y_np.shape[0]:
+        print(f"Cannot visualize UMAP for '{title}': X and y have mismatched sample numbers ({X_np.shape[0]} vs {y_np.shape[0]}).")
+        return
+
+    reducer = umap.UMAP(n_neighbors=min(n_neighbors, X_np.shape[0]-1) if X_np.shape[0] > 1 else 5, # Adjust n_neighbors if samples are few
+                       min_dist=min_dist, 
+                       n_components=2, 
+                       random_state=random_state)
+    
+    embedding = reducer.fit_transform(X_np)
+    
+    plt.figure(figsize=(10, 8))
+    scatter = plt.scatter(embedding[:, 0], embedding[:, 1], c=y_np, cmap='Spectral', s=15, alpha=0.7)
+    
+    unique_labels = np.unique(y_np)
+    if len(unique_labels) <= 10 and len(unique_labels) > 1: # Show legend for a reasonable number of classes
+        handles, _ = scatter.legend_elements()
+        plt.legend(handles=handles, labels=[str(l) for l in unique_labels], title="Classes")
+    elif len(unique_labels) > 1: # Use colorbar if too many classes for a legend
+        plt.colorbar(scatter, label='Class Labels')
+
+    plt.gca().set_aspect('equal', 'datalim')
+    plt.title(title, fontsize=16)
+    plt.xlabel("UMAP Dimension 1")
+    plt.ylabel("UMAP Dimension 2")
+    plt.grid(True)
+    
+    viz_dir = "visualizations"
+    if not os.path.exists(viz_dir):
+        os.makedirs(viz_dir)
+    
+    # Sanitize title for filename
+    safe_title = "".join(c if c.isalnum() or c in (' ', '_', '-') else '' for c in title).strip()
+    plot_filename = "_".join(safe_title.lower().split()) + ".png"
+    if not plot_filename: # Handle case where title was all special characters
+        plot_filename = "umap_visualization.png"
+        
+    save_path = os.path.join(viz_dir, plot_filename)
+    plt.savefig(save_path)
+    print(f"UMAP visualization saved to {save_path}")
+    plt.close() # Close the plot to free memory
+    
+def show_label_distribution(y, dataset_name="Dataset", plot=True):
+    """
+    Shows the distribution of labels in the dataset.
+
+    Args:
+        y (torch.Tensor or np.ndarray or pd.Series): Label data.
+        dataset_name (str): Name of the dataset for printing and plot title.
+        plot (bool): Whether to generate and save a bar plot of the distribution.
+    """
+    if isinstance(y, torch.Tensor):
+        y_np = y.cpu().numpy()
+    elif isinstance(y, pd.Series):
+        y_np = y.to_numpy()
+    else:
+        y_np = np.asarray(y) # Ensure it's a numpy array
+
+    if y_np.ndim > 1 and y_np.shape[1] > 1:
+        print(f"Warning: Labels for '{dataset_name}' appear to be one-hot encoded or multi-label. Taking argmax along axis 1.")
+        y_np = np.argmax(y_np, axis=1)
+    elif y_np.ndim > 1:
+        y_np = y_np.squeeze()
+
+
+    if y_np.shape[0] == 0:
+        print(f"Cannot show label distribution for '{dataset_name}': Input data y is empty.")
+        return
+
+    unique_labels, counts = np.unique(y_np, return_counts=True)
+
+    print(f"\nLabel distribution for {dataset_name}:")
+    if len(unique_labels) == 0:
+        print("  No labels found.")
+        return
+        
+    for label, count in zip(unique_labels, counts):
+        print(f"  Label {label}: {count} samples")
+    print(f"  Total samples: {np.sum(counts)}")
+    print(f"  Number of unique classes: {len(unique_labels)}")
+
+    if plot:
+        plt.figure(figsize=(max(8, len(unique_labels) * 0.5), 6)) # Adjust width based on number of labels
+        
+        # Use seaborn for potentially better aesthetics if available, otherwise matplotlib
+        try:
+            sns.barplot(x=[str(l) for l in unique_labels], y=counts, palette="viridis")
+        except ImportError:
+            plt.bar([str(l) for l in unique_labels], counts, color='skyblue')
+            
+        plt.title(f"Label Distribution for {dataset_name}", fontsize=16)
+        plt.xlabel("Class Label", fontsize=12)
+        plt.ylabel("Number of Samples", fontsize=12)
+        plt.xticks(rotation=45, ha="right")
+        plt.tight_layout() # Adjust layout to prevent labels from overlapping
+        
+        viz_dir = "visualizations"
+        if not os.path.exists(viz_dir):
+            os.makedirs(viz_dir)
+        
+        safe_dataset_name = "".join(c if c.isalnum() or c in (' ', '_', '-') else '' for c in dataset_name).strip()
+        plot_filename = f"label_distribution_{'_'.join(safe_dataset_name.lower().split())}.png"
+        if not plot_filename.replace("label_distribution_", "").replace(".png",""): # Handle empty safe_dataset_name
+            plot_filename = "label_distribution.png"
+
+        save_path = os.path.join(viz_dir, plot_filename)
+        plt.savefig(save_path)
+        print(f"Label distribution plot saved to {save_path}")
+        plt.close()
         
         
 
 if __name__ == "__main__":
-   X_train1, y_train, X_test, y_test = load_Kp_chess_data_ord()
+   #X_train, y_train, X_test, y_test = load_K_chess_data_splitted()
+   #X_train, y_train, X_test, y_test = load_Kp_chess_data_ord()
+   #X_train, y_train, X_test, y_test = load_abalon_data()
+   X_train, y_train, X_test, y_test = load_gamma_data()
+   #X_train, y_train, X_test, y_test = load_shuttle_data()
+   #X_train, y_train, X_test, y_test = load_poker_data()
+   
+   show_label_distribution(y_train, dataset_name="MAGIC Gamma Training Data")
+   visualize_data_umap(X_train, y_train, title="UMAP of MAGIC Gamma Training Data")
 
     
     
