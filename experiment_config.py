@@ -7,8 +7,8 @@ VISUALIZE_FIRING_STRENGTHS = True
 
 DATASETS = {
     #"Iris": load_iris_data,
-    "Shuttle": load_shuttle_data,
-    "Gamma": load_gamma_data,
+    #"Shuttle": load_shuttle_data,
+    #"Gamma": load_gamma_data,
     "K_Chess": load_K_chess_data_splitted,
     #"Heart": load_heart_data,
     #"Wine": load_wine_data,
@@ -43,13 +43,17 @@ MODELS = [
         # Add other LabelPropagation parameters as needed
     }),
     
-    # --- Rule-Based Self-Training SSL Models ---
-    ("HybridANFIS", "train_hybrid_anfis_rule_ssl", {
-        "ssl_method": "rule_based", "num_mfs": 4, "max_rules": 3000, "epochs": 100, "lr": 5e-3,
-        "initial_train_ratio": 0.2, "rule_conf_thresh": 0.9, "firing_thresh": 0.5
+    # --- Graph Based  SSL Models ---
+    ("HybridANFIS", "train_hybrid_anfis_ssl", {
+        "ssl_method": "iterative", "num_mfs": 4, "max_rules": 3000, "epochs": 300, "lr": 5e-3,
+        
     }),
-    ("POPFNN", "train_popfnn_rule_ssl", {
-        "ssl_method": "rule_based", "num_mfs": 4, "epochs": 300, "lr": 5e-4,
+    ("HybridANFIS", "train_hybrid_anfis_ssl", {
+        "ssl_method": "grf", "num_mfs": 4, "max_rules": 3000, "epochs": 300, "lr": 5e-3,
+        
+    }),
+     ("POPFNN", "train_popfnn_rule_ssl", {
+        "ssl_method": "grf", "num_mfs": 4, "epochs": 200, "lr": 5e-4,
         "rule_conf_thresh": 0.9
     }),
 ]

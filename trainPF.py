@@ -11,7 +11,7 @@ from anfisHelper import initialize_mfs_with_kmeans, initialize_mfs_with_fcm, set
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-def train_popfnn(model, Xtr, ytr, epochs=5, lr=1e-3):
+def train_popfnn(model, Xtr, ytr, epochs=200, lr=1e-3):
     initialize_mfs_with_kmeans(model, Xtr)
     #initialize_mfs_with_fcm(model, Xtr)
     model.pop_init(Xtr, ytr)              

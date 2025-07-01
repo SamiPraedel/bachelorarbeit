@@ -503,28 +503,72 @@ def load_Kp_chess_data_ord(test_size=0.3, random_state=42):
 
 
 
-def load_gamma_data(test_size=0.3, random_state=42):
+def load_htru_data(test_size=0.3, random_state=42):
     """
     Loads and preprocesses the MAGIC Gamma Telescope dataset.
     Features are scaled using MinMaxScaler.
     Target labels ('g', 'h') are encoded to 0 and 1.
     """
-    # Fetch dataset
-    magic_gamma_telescope = fetch_ucirepo(id=159) 
+    wine_quality = fetch_ucirepo(id=186) 
+  
+    # data (as pandas dataframes) 
+    X = wine_quality.data.features 
+    y = wine_quality.data.targets 
     
-    # Data (as pandas dataframes) 
-    X_df = magic_gamma_telescope.data.features 
-    y_df = magic_gamma_telescope.data.targets # y_df is a DataFrame, e.g., shape (N, 1)
-     
+        
     # Preprocess features
     scaler = MinMaxScaler()
-    X_processed_np = scaler.fit_transform(X_df) 
+    X_processed_np = scaler.fit_transform(X) 
     X_processed_np = X_processed_np.astype(np.float32)
     
     # Preprocess targets
     # y_df.values.ravel() converts the DataFrame column to a 1D NumPy array
     le = LabelEncoder()
-    y_encoded_np = le.fit_transform(y_df.values.ravel()) # Encodes 'g'/'h' to 0/1
+    y_encoded_np = le.fit_transform(y.values.ravel()) # Encodes 'g'/'h' to 0/1
+    
+    # Split data into training and testing sets
+    X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
+        X_processed_np, y_encoded_np, 
+        test_size=test_size, 
+        shuffle=True, 
+        random_state=random_state,
+        stratify=y_encoded_np # Stratification is good for classification
+    )
+    
+    # Convert NumPy arrays to PyTorch tensors
+    X_train = torch.tensor(X_train_np, dtype=torch.float32)
+    y_train = torch.tensor(y_train_np, dtype=torch.long)
+    X_test  = torch.tensor(X_test_np, dtype=torch.float32)
+    y_test  = torch.tensor(y_test_np, dtype=torch.long)
+    
+    return X_train, y_train, X_test, y_test
+
+
+def load_pmd_data(test_size=0.3, random_state=42):
+    """
+    Loads and preprocesses the MAGIC Gamma Telescope dataset.
+    Features are scaled using MinMaxScaler.
+    Target labels ('g', 'h') are encoded to 0 and 1.
+    """
+    sepsis_survival_minimal_clinical_records = fetch_ucirepo(id=827) 
+    
+    # data (as pandas dataframes) 
+    X = sepsis_survival_minimal_clinical_records.data.features 
+    y = sepsis_survival_minimal_clinical_records.data.targets 
+    
+    X = X.astype(float)
+  
+    
+        
+    # Preprocess features
+    scaler = MinMaxScaler()
+    X_processed_np = scaler.fit_transform(X) 
+    X_processed_np = X_processed_np.astype(np.float32)
+    
+    # Preprocess targets
+    # y_df.values.ravel() converts the DataFrame column to a 1D NumPy array
+    le = LabelEncoder()
+    y_encoded_np = le.fit_transform(y.values.ravel()) # Encodes 'g'/'h' to 0/1
     
     # Split data into training and testing sets
     X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
@@ -708,6 +752,44 @@ def show_label_distribution(y, dataset_name="Dataset", plot=True):
         plt.close()
         
         
+def load_parking_birmingham_dataset(test_size=0.3, random_state=42):
+    """
+    Loads and preprocesses the Birmingham Parking dataset.
+    Features are scaled using MinMaxScaler.
+    Target labels are encoded to 0 and 1.
+    """
+    # Fetch dataset
+    birmingham_parking = fetch_ucirepo() 
+    
+    # Data (as pandas dataframes) 
+    X_df = birmingham_parking.data.features 
+    y_df = birmingham_parking.data.targets # y_df is a DataFrame, e.g., shape (N, 1)
+     
+    # Preprocess features
+    scaler = MinMaxScaler()
+    X_processed_np = scaler.fit_transform(X_df) 
+    X_processed_np = X_processed_np.astype(np.float32)
+    
+    # Preprocess targets
+    le = LabelEncoder()
+    y_encoded_np = le.fit_transform(y_df.values.ravel()) # Encodes 'g'/'h' to 0/1
+    
+    # Split data into training and testing sets
+    X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
+        X_processed_np, y_encoded_np, 
+        test_size=test_size, 
+        shuffle=True, 
+        random_state=random_state,
+        stratify=y_encoded_np # Stratification is good for classification
+    )
+    
+    # Convert NumPy arrays to PyTorch tensors
+    X_train = torch.tensor(X_train_np, dtype=torch.float32)
+    y_train = torch.tensor(y_train_np, dtype=torch.long)
+    X_test  = torch.tensor(X_test_np, dtype=torch.float32)
+    y_test  = torch.tensor(y_test_np, dtype=torch.long)
+    
+    return X_train, y_train, X_test, y_test
 
 if __name__ == "__main__":
    #X_train, y_train, X_test, y_test = load_K_chess_data_splitted()

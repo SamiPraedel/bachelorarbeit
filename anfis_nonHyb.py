@@ -6,6 +6,7 @@ import random
 class NoHybridANFIS(nn.Module):
     def __init__(self, input_dim, num_classes, num_mfs, max_rules, seed, zeroG):
        # num_mfs_tensor = torch.tensor[3,3,3,2,2,2]
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         seed = seed
         random.seed(seed)
         np.random.seed(seed)
@@ -23,6 +24,7 @@ class NoHybridANFIS(nn.Module):
         self.centers = nn.Parameter(torch.ones(input_dim, num_mfs))  # Centers
         self.widths = nn.Parameter(torch.ones(input_dim, num_mfs))  # Widths
 
+
         if ((num_mfs**input_dim) <= max_rules):
             self.rules = torch.cartesian_prod(*[torch.arange(self.M) for _ in range(self.input_dim)])
         else:
@@ -31,7 +33,7 @@ class NoHybridANFIS(nn.Module):
                     size=(max_rules, self.input_dim))
             self.num_rules = max_rules
 
-        self.zeroG = True
+        self.zeroG = False
 
         if self.zeroG:
             self.consequents = nn.Parameter(torch.rand(self.num_rules, num_classes))
@@ -48,6 +50,7 @@ class NoHybridANFIS(nn.Module):
         
 
     def gaussian_mf(self, x, center, width):
+
         return torch.exp(-((x - center) ** 2) / (2 * width ** 2))
     
 
@@ -73,7 +76,7 @@ class NoHybridANFIS(nn.Module):
 
         fiering_strengths = torch.prod(rule_mfs, dim=1)  #[batch_size, num_rules]        
         
-        topk_p = 1
+        topk_p = 0.2
 
         K = max(1, int(topk_p * self.num_rules))
         vals, idx = torch.topk(fiering_strengths, k=K, dim=1)

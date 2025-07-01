@@ -11,14 +11,12 @@ import os # Added for path operations for saving visualizations
 import matplotlib.pyplot as plt # Added for plotting
 
 
-try:
-    import experiment_config as config
-    from csv_logger import initialize_csv, append_to_csv # Import specific functions
-    from visualizers import plot_firing_strengths # Import the new plotting function
 
-except ImportError:
-    print("Error: experiment_config.py or csv_logger.py not found. Please ensure they are in the same directory.")
-    exit()
+import experiment_config as config
+from csv_logger import initialize_csv, append_to_csv # Import specific functions
+from visualizers import plot_firing_strengths # Import the new plotting function
+
+
 
 
 from teacher_student_trainers import (
@@ -27,6 +25,7 @@ from teacher_student_trainers import (
 from rule_based_trainers import (
     train_hybrid_anfis_rule_ssl, train_popfnn_rule_ssl
 )
+from lb_scratch import GraphSSL
 
 
 from sklearn.ensemble import RandomForestClassifier
@@ -58,7 +57,7 @@ def rf_teacher_pseudo_labels(X_train_np: np.ndarray, y_train_np: np.ndarray,
                              idx_lab: np.ndarray, idx_unlab: np.ndarray,
                              thr: float = 0.9, seed: int = config.SEED): # Use config.SEED as default
     """Trains a RandomForest teacher and generates pseudo-labels."""
-    rf = RandomForestClassifier(n_estimators=400, max_depth=None, n_jobs=-1, random_state=seed)
+    rf = RandomForestClassifier(n_estimators=100, max_depth=4, n_jobs=-1, random_state=seed)
     rf.fit(X_train_np[idx_lab], y_train_np[idx_lab])
 
     if len(idx_unlab) == 0:
@@ -84,6 +83,7 @@ TRAINER_MAPPING = {
     "train_hybrid_anfis_rule_ssl": train_hybrid_anfis_rule_ssl,
     "train_popfnn_rule_ssl": train_popfnn_rule_ssl,
     "train_nohybrid_anfis_ssl": train_nohybrid_anfis_ssl
+    "train_nohybrid_anfis_lp_"
 }
 # ---------- Main Experiment Loop ------------------------------------------
 def run_experiments(datasets_config, models_config, label_fractions, teacher_conf_threshold):
@@ -126,13 +126,15 @@ def run_experiments(datasets_config, models_config, label_fractions, teacher_con
 
                 if model_config_key == "SKLEARN_RF_BASELINE":
                     print(f"    Training RF Baseline...")
-                    rf_baseline = RandomForestClassifier(n_estimators=current_params.get('n_estimators', 100), 
-                                                         max_depth=current_params.get('max_depth', None),
-                                                         random_state=config.SEED, n_jobs=-1)
+                    # rf_baseline = RandomForestClassifier(n_estimators=current_params.get('n_estimators', 100), 
+                    #                                      max_depth=current_params.get('max_depth', None),
+                    #                                      random_state=config.SEED, n_jobs=-1)
+                    rf_baseline = RandomForestClassifier(n_estimators=100, max_depth=4, random_state=config.SEED)
                     rf_baseline.fit(X_l_np, y_l_np)
                     y_pred_ssl_np = rf_baseline.predict(X_te_np)
                     trained_model_obj = rf_baseline # Store for consistency, though not used further in this path
                     num_pseudo_labels_for_print = 0 # No pseudo-labels in this context
+                    print("hasenhüttle")
 
                 elif model_config_key == "SKLEARN_LABEL_PROP":
                     print(f"    Training Label Propagation Baseline...")
@@ -147,6 +149,15 @@ def run_experiments(datasets_config, models_config, label_fractions, teacher_con
                     y_pred_ssl_np = lp_model.predict(X_te_np)
                     trained_model_obj = lp_model
                     num_pseudo_labels_for_print = len(idx_u) # All unlabeled data is used by LP
+                   # print('Accuracy: ', metrics.accuracy_score(y_test,y_pred))
+                    
+                    
+                    #true_np = np.asarray(y_l_np)                                      
+                    #mask_unlabeled = random_unlabeled_points  
+                   # pseudo_acc = np.mean(true_np[mask_unlabeled] == pseudo[mask_unlabeled])
+                    #pseudo_acc = np.mean(true_np == y_lp_input) # Overall accuracy for pseudo-labels
+                    #print(f"Pseudo-Label Accuracy: {pseudo_acc*100:.2f}%")
+      
 
                 elif model_config_key in TRAINER_MAPPING: # Existing PyTorch SSL models
                     model_trainer_fn = TRAINER_MAPPING[model_config_key]
@@ -180,6 +191,7 @@ def run_experiments(datasets_config, models_config, label_fractions, teacher_con
                             X_l, y_l, X_u,
                             input_dim, num_classes, device, **current_params)
                         num_pseudo_labels_for_print = num_pseudo_from_trainer
+                   
                     else:
                         print(f"      Warning: Unknown ssl_method '{ssl_method_tag}' for PyTorch model {model_name}. Skipping.")
                         continue # Skip to next fraction or model
@@ -190,6 +202,37 @@ def run_experiments(datasets_config, models_config, label_fractions, teacher_con
                         with torch.no_grad():
                             predictions_output = trained_model_obj(X_te_tensor.to(device))
                         
+                        # --- Graph-based SSL integration ---
+                        if ssl_method_tag.lower() in ["grf", "iterative"]:
+                            # Ensure rule-based models return firing strengths
+                            if not (isinstance(predictions_output, tuple) and len(predictions_output) > 1):
+                                print(f"      Warning: {model_name} with '{ssl_method_tag}' SSL requires firing strengths but model output is not in the expected format. Skipping.")
+                                continue  # Skip if firing strengths are not available
+                            
+                            firing_strengths_train = predictions_output[1].cpu()
+
+                            # Prepare semi-supervised labels for graph SSL
+                            y_semi_sup = np.full(len(y_tr_np), -1, dtype=np.int64)
+                            y_semi_sup[idx_l.cpu().numpy()] = y_l_np
+                            
+                            # Initialize and fit the appropriate GraphSSL model
+                            graph_ssl_model = GraphSSL(method=ssl_method_tag.lower(), device="cpu")  # GraphSSL works on CPU
+                            graph_ssl_model.fit(firing_strengths_train, y_semi_sup)
+
+                            # Predict and evaluate
+                            with torch.no_grad():
+                                _, test_firing_strengths, _ = trained_model_obj(X_te_tensor.to(device))
+                                y_pred_ssl_np = graph_ssl_model.predict(test_firing_strengths.cpu())
+
+                            # Override model output for accuracy calculation
+                            predictions_output = (torch.tensor(y_pred_ssl_np), )
+
+                            print(f"      Applied graph-based SSL ({ssl_method_tag.upper()}).")
+
+                        # --- End Graph-based SSL ---
+
+
+
                         final_model_output = predictions_output[0] if isinstance(predictions_output, tuple) else predictions_output
                         y_pred_ssl_torch = final_model_output.argmax(dim=1).cpu()
                         y_pred_ssl_np = y_pred_ssl_torch.numpy()

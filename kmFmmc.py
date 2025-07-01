@@ -169,6 +169,24 @@ class FMNC:
             self.th = max(self.th * self.th_decay, self.th_min)
 
     # -------- Inferenz --------------------------------------------
+    
+    @torch.no_grad()
+    def _get_rule_activations(self, X: torch.Tensor) -> torch.Tensor:
+        """
+        Calculates the membership degree of each sample to each hyperbox (rule).
+        This is the key method for compatibility with the SSL pipeline.
+        """
+        if self.V is None:
+            raise RuntimeError("The model has not been fitted yet. Call fit() or seed_boxes_kmeans() first.")
+        if not isinstance(X, torch.Tensor):
+            X = torch.as_tensor(X, dtype=torch.float32)
+
+        all_activations = []
+        for s in range(0, len(X), self.bs):
+            xb = X[s:s+self.bs].to(self.dev)
+            all_activations.append(self._memb_batch(xb))
+        return torch.cat(all_activations)
+
     @torch.no_grad()
     def predict(self, X: Tensor) -> Tensor:
         X = X.to(self.dev)
@@ -213,7 +231,7 @@ if __name__ == "__main__":
 
     clf.seed_boxes_kmeans(Xtr, ytr, k=3)   # 3 Start-Boxen je Klasse
 
--
+
     clf.fit(Xtr, ytr, epochs=1, shuffle=True)
 
     print("Test-MCC:", clf.mcc_score(Xte, yte))

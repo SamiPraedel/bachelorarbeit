@@ -104,7 +104,7 @@ def run_experiment(
         model = POPFNN(X_train.shape[1], num_classes, num_mfs).to(device)
         model.pop_init(X_train, y_train)
         # Assuming train_popfnn is updated similarly to accept X_val, y_val
-        model = train_popfnn(model, X_train, y_train, num_epochs, lr, X_val=X_test, y_val=y_test)
+        model = train_popfnn(model, X_train, y_train, num_epochs, lr)
 
     elif type == "RandomF":
         model = RandomForestClassifier(n_estimators=25)
@@ -265,7 +265,7 @@ def run_experiment(
 
             acc = (preds == y_test).float().mean().item()
             print(f"Test-Accuracy: {acc*100:.2f}%")
-            calculate_popfnn_silhouette()
+            #calculate_popfnn_silhouette()
             
 
             
@@ -283,7 +283,7 @@ def run_experiment(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--type", choices=["anfis","noHyb","Pop", "RandomF","neuralNet"], default="noHyb",)
+    parser.add_argument("--type", choices=["anfis","noHyb","Pop", "RandomF","neuralNet"], default="Pop",)
     parser.add_argument("--dataset", choices=["iris","heart","ChessK", "ChessKp","abalone", "Poker", "shuttle", "gamma"], default="ChessK")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--lr", type=float, default=5e-3)

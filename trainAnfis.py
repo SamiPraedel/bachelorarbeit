@@ -321,3 +321,4 @@ def train_nohybrid_anfis_ssl(X_l, y_l, X_p, y_p, w_p,
         loss.backward()
         opt.step()
     return model
+
