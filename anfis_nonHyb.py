@@ -33,8 +33,6 @@ class NoHybridANFIS(nn.Module):
                     size=(max_rules, self.input_dim))
             self.num_rules = max_rules
 
-        self.zeroG = False
-
         if self.zeroG:
             self.consequents = nn.Parameter(torch.rand(self.num_rules, num_classes))
         else:

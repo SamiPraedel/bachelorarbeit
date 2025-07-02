@@ -12,7 +12,12 @@ from anfisHelper import initialize_mfs_with_kmeans, initialize_mfs_with_fcm, set
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 def train_popfnn(model, Xtr, ytr, epochs=200, lr=1e-3):
-    initialize_mfs_with_kmeans(model, Xtr)
+    # Ensure data is on the same device as the model before any operations
+    model_device = next(model.parameters()).device
+    Xtr = Xtr.to(model_device)
+    ytr = ytr.to(model_device)
+
+    #initialize_mfs_with_kmeans(model, Xtr)
     #initialize_mfs_with_fcm(model, Xtr)
     model.pop_init(Xtr, ytr)              
 
@@ -31,7 +36,7 @@ def train_popfnn(model, Xtr, ytr, epochs=200, lr=1e-3):
             opt.zero_grad()
 
             with autocast():                  # FP16/FP32 mixed
-                logits = model(xb)
+                logits = model(xb)[0] # Unpack logits from model output
                 loss   = loss_fn(logits, yb)
             
 

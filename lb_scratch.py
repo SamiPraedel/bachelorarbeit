@@ -8,6 +8,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 from data_utils    import load_K_chess_data_splitted, load_htru_data, load_pmd_data
 from anfis_nonHyb import NoHybridANFIS
+from anfis_hybrid import HybridANFIS
 import torch.nn.functional as F
 from anfisHelper import initialize_mfs_with_kmeans
 from PopFnn import POPFNN
@@ -16,7 +17,7 @@ from torch import nn
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.datasets import make_classification
 from sklearn import metrics
-
+from sklearn.neighbors import kneighbors_graph
 
 
 
@@ -52,7 +53,9 @@ class GraphSSL(BaseEstimator, ClassifierMixin):
         W = torch.zeros(n_samples, n_samples, device=self.device)
         W[row_indices, neighbors_idx] = weights
         return (W + W.T) / 2
-
+    
+    
+    
     def _prepare_fit(self, X, y):
         """Shared setup for all fit methods."""
         if not isinstance(X, torch.Tensor): X = torch.from_numpy(X).float()
@@ -72,7 +75,8 @@ class GraphSSL(BaseEstimator, ClassifierMixin):
     def fit_iterative(self, X, y):
         """Fits using iterative Label Propagation on a k-NN graph."""
         X, y, Y_init, labeled_mask = self._prepare_fit(X, y)
-        W = self._build_knn_graph(X)
+        #W = self._build_knn_graph(X)
+        W = self.build_sparse_knn_graph_sklearn(X)
         D = torch.diag(W.sum(axis=1))
         D_inv_sqrt = torch.diag(1.0 / (torch.sqrt(torch.diag(D)) + 1e-9))
         S = D_inv_sqrt @ W @ D_inv_sqrt
@@ -90,7 +94,7 @@ class GraphSSL(BaseEstimator, ClassifierMixin):
         """Fits using the Gaussian Random Field analytical solution on a k-NN graph."""
         X, y, Y_, labeled_mask = self._prepare_fit(X, y)
         unlabeled_mask = ~labeled_mask
-        W = self._build_knn_graph(X)
+        W = self.build_sparse_knn_graph_sklearn(X)
         D = torch.diag(W.sum(axis=1))
         L = D - W
         L_uu = L[unlabeled_mask, :][:, unlabeled_mask]
@@ -104,35 +108,6 @@ class GraphSSL(BaseEstimator, ClassifierMixin):
         self.transduction_ = self.classes_[self.label_distributions_.argmax(1).cpu().numpy()]
         return self
 
-    def fit_bipartite(self, X_rules, y):
-        device = self.device
-        X = X_rules.to(device).float()
-        y = torch.as_tensor(y, device=device, dtype=torch.long)
-        self.classes_ = torch.unique(y[y!=-1]).cpu().numpy()
-        C = self.n_classes_ = len(self.classes_)
-        y_remap = y.clone()
-        for i,c in enumerate(self.classes_): y_remap[y==c] = i
-        self.X_train_ = X
-        W = F.normalize(X, p=1, dim=1)
-        N,R = W.shape
-        rows = torch.arange(N, device=device).repeat_interleave(R)
-        cols = torch.arange(R, device=device).repeat(N)
-        vals = W.flatten()
-        A_idx = torch.cat([torch.stack([rows, cols+N]), torch.stack([cols+N, rows])], dim=1)
-        A = torch.sparse_coo_tensor(A_idx, torch.cat([vals, vals]), size=(N+R, N+R)).coalesce()
-        deg_inv = 1.0 / torch.sparse.sum(A, dim=1).to_dense().clamp(min=1e-12)
-        A_rw = torch.sparse_coo_tensor(A.indices(), A.values()*deg_inv[A.indices()[0]], A.size())
-        Y = torch.zeros(N+R, C, device=device)
-        Y[y_remap != -1, y_remap[y_remap != -1]] = 1.
-        Y0 = Y.clone()
-        for _ in range(self.max_iter):
-            Y_new = self.alpha * torch.sparse.mm(A_rw, Y) + (1-self.alpha)*Y0
-            if torch.norm(Y_new-Y, p=1) < self.tol: break
-            Y = Y_new
-        self.label_distributions_ = Y[:N]
-        self.transduction_ = self.classes_[self.label_distributions_.argmax(1).cpu().numpy()]
-        return self
-
     def fit(self, X, y):
         """Main fit method that dispatches to the correct algorithm."""
         if self.method == 'grf':
@@ -141,8 +116,6 @@ class GraphSSL(BaseEstimator, ClassifierMixin):
             return self.fit_iterative(X, y)
         elif self.method == 'bipartite':
             return self.fit_bipartite(X, y)
-        else:
-            raise ValueError("Method must be 'grf', 'iterative', or 'bipartite'")
 
     def predict(self, X):
         """Predicts labels for new data points using a k-NN approach."""
@@ -282,9 +255,15 @@ if __name__ == '__main__':
         
         X_l, y_l = X_train[labeled_indices], y_train[labeled_indices]
         
+        # Define the SSL methods to be tested across all experiments
+        methods_to_test = {
+            "Gaussian Random Field": GraphSSL(k=15, sigma=0.2, method='grf', device=device),
+            "Iterative k-NN Prop": GraphSSL(k=15, sigma=0.2, method='iterative', device=device),
+        }
+
 
         # --- Experiment 1: NoHybridANFIS ---
-        print("\n\n--- EXPERIMENT 1: Using NoHybridANFIS as Feature Extractor ---")
+        """print("\n\n--- EXPERIMENT 1: Using NoHybridANFIS as Feature Extractor ---")
         anfis_model = NoHybridANFIS(
             input_dim=X_train.shape[1],
             num_classes=len(y_train.unique()), num_mfs=4,max_rules=1000,
@@ -307,12 +286,6 @@ if __name__ == '__main__':
             _, rule_activations_test_anfis, _ = anfis_model(X_test.to(device))
         print(f"Shape of ANFIS feature space: {rule_activations_train_anfis.shape}")
 
-        methods_to_test = {
-            "Gaussian Random Field": GraphSSL(k=15, sigma=0.2, method='grf', device=device),
-            "Iterative k-NN Prop": GraphSSL(k=15, sigma=0.2, method='iterative', device=device),
-
-        }
-
         for name, model in methods_to_test.items():
             print(f"\n--- Running SSL with: {name} ---")
             model.fit(rule_activations_train_anfis, y_semi_sup)
@@ -321,10 +294,10 @@ if __name__ == '__main__':
             print(f"  Pseudo-Label Accuracy: {pseudo_label_acc * 100:.2f}%")
             y_pred = model.predict(rule_activations_test_anfis)
             test_acc = accuracy_score(y_test.numpy(), y_pred)
-            print(f"  Final Test Accuracy: {test_acc * 100:.2f}%")
+            print(f"  Final Test Accuracy: {test_acc * 100:.2f}%")"""
 
         # --- Experiment 2: POPFNN ---
-        print("\n\n--- EXPERIMENT 2: Using POPFNN as Feature Extractor ---")
+        """ print("\n\n--- EXPERIMENT 2: Using POPFNN as Feature Extractor ---")
         popfnn_model = POPFNN(
             d=X_train.shape[1],
             C=len(y_train.unique()),
@@ -359,10 +332,58 @@ if __name__ == '__main__':
             print(f"  Pseudo-Label Accuracy: {pseudo_label_acc * 100:.2f}%")
             y_pred = model.predict(rule_activations_test_pop)
             test_acc = accuracy_score(y_test.numpy(), y_pred)
-            print(f"  Final Test Accuracy: {test_acc * 100:.2f}%")
+            print(f"  Final Test Accuracy: {test_acc * 100:.2f}%")"""
             
+        # --- Experiment 4: HybridANFIS ---
+        print("\n\n--- EXPERIMENT 4: Using HybridANFIS as Feature Extractor ---")
+        hybrid_anfis_model = HybridANFIS(
+            input_dim=X_train.shape[1],
+            num_classes=len(y_train.unique()),
+            num_mfs=2,
+            max_rules=1000,
+            seed=42
+        ).to(device)
+
+        # Hybrid training loop
+        optimizer_hybrid = torch.optim.Adam([
+            {'params': hybrid_anfis_model.centers},
+            {'params': hybrid_anfis_model.widths}
+        ], lr=0.01)
+        
+        y_l_onehot = F.one_hot(y_l, num_classes=len(y_train.unique())).float().to(device)
+
+        for epoch in range(500):
+            hybrid_anfis_model.train()
+            optimizer_hybrid.zero_grad()
+            
+            # Forward pass for gradient-based update of premise parameters
+            logits, norm_fs, x_ext = hybrid_anfis_model(X_l.to(device))
+            loss = F.cross_entropy(logits, y_l.to(device))
+            loss.backward()
+            optimizer_hybrid.step()
+            
+            # Update consequent parameters with LSE
+            hybrid_anfis_model.update_consequents(norm_fs.detach(), x_ext.detach(), y_l_onehot)
+
+        hybrid_anfis_model.eval()
+        with torch.no_grad():
+            # The forward pass of HybridANFIS returns (logits, norm_fs, x_ext)
+            _, rule_activations_train_hybrid, _ = hybrid_anfis_model(X_train.to(device))
+            _, rule_activations_test_hybrid, _ = hybrid_anfis_model(X_test.to(device))
+        print(f"Shape of HybridANFIS feature space: {rule_activations_train_hybrid.shape}")
+
+        # Re-use the same SSL methods for evaluation
+        for name, model in methods_to_test.items():
+            print(f"\n--- Running SSL with: {name} ---")
+            model.fit(rule_activations_train_hybrid, y_semi_sup)
+            unlabeled_mask = (y_semi_sup == -1)
+            pseudo_label_acc = accuracy_score(y_train.numpy()[unlabeled_mask], model.transduction_[unlabeled_mask])
+            print(f"  Pseudo-Label Accuracy: {pseudo_label_acc * 100:.2f}%")
+            y_pred = model.predict(rule_activations_test_hybrid)
+            test_acc = accuracy_score(y_test.numpy(), y_pred)
+            print(f"  Final Test Accuracy: {test_acc * 100:.2f}%")
         # --- Experiment 3: FuzzyMinMax (FMNC) ---
-        print("\n\n--- EXPERIMENT: Using advanced FMNC as Feature Extractor ---")
+        """  print("\n\n--- EXPERIMENT: Using advanced FMNC as Feature Extractor ---")
         fmm_model = FMNC(
             gamma=1.7, 
             theta0=2.5,
@@ -400,7 +421,7 @@ if __name__ == '__main__':
             print(f"  Pseudo-Label Accuracy: {pseudo_label_acc * 100:.2f}%")
             y_pred = model.predict(rule_activations_test_fmm)
             test_acc = accuracy_score(y_test.numpy(), y_pred)
-            print(f"  Final Test Accuracy: {test_acc * 100:.2f}%")
+            print(f"  Final Test Accuracy: {test_acc * 100:.2f}%")"""
             
             
             
@@ -452,4 +473,3 @@ if __name__ == '__main__':
             y_pred_fmnc = final_fmnc_model.predict(X_test)
             test_acc = accuracy_score(y_test.numpy(), y_pred_fmnc.cpu().numpy())
             print(f"\nFinal Test Accuracy (IFGST FMNC): {test_acc * 100:.2f}%")"""
-

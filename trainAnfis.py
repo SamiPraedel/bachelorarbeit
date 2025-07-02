@@ -22,7 +22,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 def train_anfis_noHyb(
     model: NoHybridANFIS, 
     X: torch.Tensor, 
-    Y: torch.Tensor, 
+    Y: torch.Tensor,
+    X_all,
     num_epochs: int, 
     lr: float,
     X_val: torch.Tensor = None, 
@@ -30,7 +31,7 @@ def train_anfis_noHyb(
 ):
     model.to(device)
     
-    initialize_mfs_with_kmeans(model, X)  # X_train as np array
+    initialize_mfs_with_kmeans(model, X_all)  # X_train as np array
     #initialize_mfs_with_fcm(model, X)
 
     model.widths.data *= 1.
@@ -51,25 +52,33 @@ def train_anfis_noHyb(
         history["val_loss"] = []
         history["val_acc"] = []
         X_val, y_val = X_val.to(device), y_val.to(device)
+    
+    X_all = X_all.to(device)  # Ensure X_all is on the same device as the model
 
     for epoch in range(1, num_epochs + 1):
         epoch_loss = 0.0
         correct_train = 0
         total_train = 0
-
+        optimizer.zero_grad()
+        model.train()
+        _,fs_all, mask_all = model(X_all)
+        lb_loss_all = model.load_balance_loss(fs_all, mask_all) 
+        lb_loss_all.backward()  # Compute load balance loss once per epoch
+        
         for batch_X, batch_Y in dataloader:
-            model.train() # Ensure model is in training mode
+             # Ensure model is in training mode
             batch_X = batch_X.to(device, non_blocking=True)
             batch_Y = batch_Y.to(device, non_blocking=True)
             outputs, firing_strengths, mask = model(batch_X)  # outputs: [batch_size, num_classes]
+           
             ce_loss = criterion(outputs, batch_Y)
-            lb_loss  = model.load_balance_loss(firing_strengths, mask)
-            loss     = ce_loss + lb_loss
+            #lb_loss  = model.load_balance_loss(firing_strengths, mask)
+            loss     = ce_loss + lb_loss_all
             #print(lb_loss)
                       
-            optimizer.zero_grad()
+            
             loss.backward()
-            optimizer.step()
+            
             model.widths.data.clamp_(min=0.2, max=0.8)
             model.centers.data.clamp_(min=0, max=1)
 
@@ -80,7 +89,8 @@ def train_anfis_noHyb(
             _, predicted_train = torch.max(outputs.data, 1)
             total_train += batch_Y.size(0)
             correct_train += (predicted_train == batch_Y).sum().item()
-
+            
+        optimizer.step()
         # --- Code moved outside the batch loop ---
         #scheduler.step() # If uncommented, should be here
 
@@ -142,15 +152,18 @@ def train_anfis_noHyb(
 def train_anfis_hybrid(
     model: HybridANFIS, 
     X: torch.Tensor, 
-    Y: torch.Tensor, 
+    Y: torch.Tensor,
+    X_all, # Added X_all for initialization 
     num_epochs: int, 
     lr: float, # Note: lr is used for optimizer for MFs
     X_val: torch.Tensor = None, 
     y_val: torch.Tensor = None
 ):
     model.to(device)
+    # Move data to the same device as the model at the beginning
+    X, Y = X.to(device), Y.to(device)
     
-    initialize_mfs_with_kmeans(model, X)
+    initialize_mfs_with_kmeans(model, X_all)
     #initialize_mfs_with_fcm(model, X)
     # model.widths.data *= 1.8                    # grob verdoppeln
     # model.widths.data.clamp_(min=0.06, max=0.9) 
@@ -188,7 +201,7 @@ def train_anfis_hybrid(
     trainset = torch.utils.data.TensorDataset(X, Y)
     dataloader = DataLoader(trainset, batch_size=128, num_workers=0, shuffle=True)
     N, P = X.shape
-    k = int(N * 0.6)
+    k = int(N * 1)
     
     # Initialize history dictionary to store metrics
     history = {"train_loss": [], "train_acc": []}
@@ -223,8 +236,8 @@ def train_anfis_hybrid(
             loss.backward()
             optimizer.step()
 
-            model.widths.data.clamp_(min=0.2, max=0.8)
-            model.centers.data.clamp_(min=0, max=1)
+            #model.widths.data.clamp_(min=0.2, max=0.8)
+            #model.centers.data.clamp_(min=0, max=1)
             
             epoch_loss += loss.item()
             _, predicted_train = torch.max(outputs.data, 1)
@@ -321,4 +334,3 @@ def train_nohybrid_anfis_ssl(X_l, y_l, X_p, y_p, w_p,
         loss.backward()
         opt.step()
     return model
-

@@ -1,0 +1,4 @@
+Dataset   ,Model           ,SSL_Meth      ,Lab_Frac    ,S_Acc     
+K_Chess   ,HybridANFIS     ,iterative     ,10          ,31.46     
+K_Chess   ,HybridANFIS     ,iterative     ,20          ,35.33     
+K_Chess   ,HybridANFIS     ,iterative     ,50          ,36.69     

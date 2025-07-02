@@ -3,19 +3,13 @@
 # This file handles CSV logging for the SSL experiments.
 
 import csv
+import ssl_exp_config as config
 
-# Import configurations from experiment_config.py
-try:
-    import experiment_config as config
-except ImportError:
-    print("Error: experiment_config.py not found. Please ensure it's in the same directory.")
-    exit()
 
 CSV_HEADERS = [
-    "Dataset", "Model", "SSL_Meth", "Lab_Frac", 
-    "T_Acc", "S_Acc", "Sil_Firing_True"
+    "Dataset", "Model", "SSL_Meth", "Lab_Frac", "S_Acc",
 ]
-COLUMN_WIDTHS = [10, 12, 14, 12, 10, 10, 15, 15, 12]
+COLUMN_WIDTHS = [10, 16, 14, 12, 10]
 
 def format_for_csv_row(data_list, widths):
     return [str(item).ljust(widths[i]) for i, item in enumerate(data_list)]

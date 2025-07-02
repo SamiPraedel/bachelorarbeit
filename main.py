@@ -16,7 +16,7 @@ from PopFnn import POPFNN
 
 from trainPF import train_popfnn, calculate_popfnn_silhouette
 from trainAnfis import train_anfis_noHyb, train_anfis_hybrid
-from data_utils import load_iris_data, load_heart_data, load_wine_data, load_abalon_data, load_Kp_chess_data, load_K_chess_data_splitted, load_K_chess_data_OneHot, load_poker_data, load_Kp_chess_data_ord, load_shuttle_data, load_gamma_data
+from data_utils import load_iris_data, load_heart_data, load_wine_data, load_abalon_data, load_Kp_chess_data, load_K_chess_data_splitted, load_K_chess_data_OneHot, load_poker_data, load_Kp_chess_data_ord, load_shuttle_data, load_htru_data
 from create_plots import plot_TopK, plot_sorted_Fs, plot_umap_fixed_rule, plot_sample_firing_strengths
 from anfisHelper import weighted_sampler, rule_stats, set_rule_subset, rule_stats_wta, per_class_rule_scores
 # for training on cuda
@@ -40,13 +40,12 @@ def run_experiment(
     DATASETS = {
         "iris":    (load_iris_data,3),
         "heart":   (load_heart_data,5),
-        "wine":    (load_wine_data,11),
+        "wine":    (load_htru_data,11),
         "abalone": (load_abalon_data,3),
         "ChessK":  (load_K_chess_data_splitted,18),
         "ChessKp": (load_Kp_chess_data_ord,2),
         "Poker":   (load_poker_data,10),
         "shuttle": (load_shuttle_data, 7),
-        "gamma":   (load_gamma_data, 2)
         
     }
     try:
@@ -261,7 +260,7 @@ def run_experiment(
         elif type == "Pop":
             model.eval()                             
             with torch.no_grad():
-                preds = model(X_test).argmax(dim=1)
+                preds = model(X_test)[0].argmax(dim=1)
 
             acc = (preds == y_test).float().mean().item()
             print(f"Test-Accuracy: {acc*100:.2f}%")
@@ -283,9 +282,9 @@ def run_experiment(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--type", choices=["anfis","noHyb","Pop", "RandomF","neuralNet"], default="Pop",)
-    parser.add_argument("--dataset", choices=["iris","heart","ChessK", "ChessKp","abalone", "Poker", "shuttle", "gamma"], default="ChessK")
-    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--type", choices=["anfis","noHyb","Pop", "RandomF","neuralNet"], default="noHyb",)
+    parser.add_argument("--dataset", choices=["iris","heart","ChessK", "ChessKp","abalone", "Poker", "shuttle", "gamma, wine"], default="wine")
+    parser.add_argument("--epochs", type=int, default=300)
     parser.add_argument("--lr", type=float, default=5e-3)
     parser.add_argument("--num_mfs", type=int, default=3)
     parser.add_argument("--max_rules", type=int, default=1000)

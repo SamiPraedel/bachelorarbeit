@@ -12,8 +12,6 @@ class HybridANFIS(nn.Module):
         
         super(HybridANFIS, self).__init__()
         
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
         self.input_dim = input_dim
         self.num_classes = num_classes
         self.M = num_mfs  
@@ -219,6 +217,3 @@ class HybridANFIS(nn.Module):
         widths = self.widths.unsqueeze(0)
         μ = torch.exp(-((x_exp - centers) ** 2) / (2 * widths ** 2) + 1e-9)
         return μ
-
-
-

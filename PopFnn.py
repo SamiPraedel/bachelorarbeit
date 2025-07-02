@@ -33,10 +33,11 @@ class POPFNN(nn.Module):
 
 
     def forward(self, x):               
-        fire = self._fire(x)            
+        fire = self._fire(x)
         W_eff = (self.W * self.label_cent)      
         W_eff = W_eff.view(self.R, self.C, self.M).sum(dim=2)  
-        return fire @ W_eff                         
+        logits = fire @ W_eff
+        return logits, fire, None # Return firing strengths for SSL trainers
 
     @torch.no_grad()
     def pop_init(self, X, y):
@@ -66,4 +67,3 @@ class POPFNN(nn.Module):
         self.W.add_(fire.T @ lab_mat)                            # [R,C*M]
         row_sums = self.W.sum(dim=1, keepdim=True).clamp(min=1e-6)
         self.W.div_(row_sums)
-
