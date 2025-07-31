@@ -1,3 +1,5 @@
+# Dispatcher import for experiment runners
+from lb_scratch import ExperimentRunner
 # trainers.py
 import torch
 import torch.nn.functional as F
@@ -7,12 +9,14 @@ from sklearn.metrics import accuracy_score
 # Import model-specific classes and trainers for specialized handling
 from anfis_hybrid import HybridANFIS
 from PopFnn import POPFNN
+from kmFmmc import FMNC
 from trainAnfis import train_anfis_hybrid, train_anfis_noHyb
 from trainPF import train_popfnn
 from anfis_nonHyb import NoHybridANFIS
 # You will need to make your GraphSSL class available for import
 # For example, by placing it in a file like `graph_ssl.py`
 from lb_scratch import GraphSSL 
+from anfisHelper import initialize_mfs_with_kmeans
 
 def _train_supervised_step(model, X_l, y_l, X_tr,device, lr=0.01, epochs=100, **kwargs):
     """
@@ -24,14 +28,34 @@ def _train_supervised_step(model, X_l, y_l, X_tr,device, lr=0.01, epochs=100, **
 
     if isinstance(model, HybridANFIS):
         print("      Using specialized HybridANFIS trainer...")
-        train_anfis_hybrid(model, X_l, y_l, X_tr,num_epochs=epochs, lr=lr)
+        model.train_anfis_hybrid(model, X_l, y_l, X_tr, epochs=epochs) 
+       
     elif isinstance(model, POPFNN):
         print("      Using specialized POPFNN trainer...")
-        train_popfnn(model, X_l, y_l, epochs=epochs, lr=lr)
+        model.train_popfnn(X_l,y_l, X_tr, epochs=100)
+        
+        
     elif isinstance(model, NoHybridANFIS):
         print("      Using specialized NoHybridANFIS trainer...")
         # Assuming NoHybridANFIS has a specific training method
-        train_anfis_noHyb(model, X_l, y_l, X_tr, num_epochs=epochs, lr=lr)
+        #train_anfis_noHyb(model, X_l, y_l, X_tr, num_epochs=epochs, lr=lr)
+        initialize_mfs_with_kmeans(model, X_tr)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+        for epoch in range(epochs):
+            model.train()
+            optimizer.zero_grad()
+            logits, fs, mask = model(X_l.to(device))
+            loss = F.cross_entropy(logits, y_l.to(device))
+            #lb_loss  = model.load_balance_loss(fs, mask)
+            #loss     = loss + lb_loss
+            loss.backward()
+            optimizer.step()
+    elif isinstance(model, FMNC):
+        model.seed_boxes_kmeans(X_l, y_l, k=3)
+        model.fit(X_l, y_l, epochs=1, shuffle=True)
+        
+     
+
     else:
         # Generic trainer for end-to-end differentiable models like NoHybridANFIS.
         print("      Using generic supervised trainer...")
@@ -83,66 +107,32 @@ def train_rulespace_ssl(
     return y_pred_np
 
 
-def train_ifgst(
-    model_instance,
-    X_l, y_l, X_u, X_te,
-    device,
-    num_rounds=5, epochs_per_round=15, confidence_threshold=0.95, **kwargs
-):
 
-    # Initial supervised training
-    model_instance = _train_supervised_step(model_instance, X_l, y_l, device, epochs=200, **kwargs) # Warm-up
-
-    # Start the iterative self-training loop
-    for r in range(num_rounds):
-        print(f"\n      --- Self-Training Round {r+1}/{num_rounds} ---")
-        if len(X_u) == 0:
-            print("      Unlabeled pool is empty. Stopping.")
-            break
-
-        # 1. Feature Extraction on all current data (labeled + unlabeled)
-        X_all = torch.cat([X_l, X_u])
-        model_instance.eval()
-        with torch.no_grad():
-            _, rule_activations_all, _ = model_instance(X_all.to(device))
-
-        # 2. Pseudo-Label Generation with a GraphSSL teacher
-        y_round_semi_sup = np.concatenate([y_l.numpy(), np.full(len(X_u), -1, dtype=np.int64)])
-        ssl_teacher = GraphSSL(method='iterative', k=15, sigma=0.2, device=device)
-        ssl_teacher.fit(rule_activations_all, y_round_semi_sup)
-
-        # 3. Select high-confidence pseudo-labels
-        confidences = torch.from_numpy(ssl_teacher.label_distributions_).max(1).values
-        pseudo_labels = torch.from_numpy(ssl_teacher.transduction_)
-        
-        unlabeled_confidences = confidences[len(y_l):]
-        unlabeled_pseudo_labels = pseudo_labels[len(y_l):]
-        
-        high_conf_mask = (unlabeled_confidences > confidence_threshold)
-        
-        if high_conf_mask.sum() == 0:
-            print("      No new pseudo-labels passed the confidence threshold. Stopping.")
-            break
-            
-        # 4. Augment the dataset
-        X_new_pseudo = X_u[high_conf_mask]
-        y_new_pseudo = unlabeled_pseudo_labels[high_conf_mask].long()
-        
-        print(f"      Adding {len(X_new_pseudo)} new high-confidence pseudo-labels.")
-        X_l = torch.cat([X_l, X_new_pseudo])
-        y_l = torch.cat([y_l, y_new_pseudo])
-        X_u = X_u[~high_conf_mask]
-
-        # 5. Retrain the student model on the augmented dataset
-        model_instance = _train_supervised_step(model_instance, X_l, y_l, device, lr=0.005, epochs=epochs_per_round, **kwargs)
-
-    print("\n--- IFGST training complete! ---")
-    
-    # Final prediction on the test set
-    model_instance.eval()
-    with torch.no_grad():
-        output = model_instance(X_te.to(device))
-        logits = output[0] if isinstance(output, tuple) else output
-        y_pred_np = logits.argmax(dim=1).cpu().numpy()
-        
-    return y_pred_np
+# --- Dispatcher for ExperimentRunner static methods ---
+def run_experiment(model_instance, method, *args, **kwargs):
+    """
+    Dispatch to ExperimentRunner based on `method`.
+    method should be one of:
+      - 'supervised'
+      - 'rule_space'
+      - 'mf_space'
+      - 'raw_space'
+      - 'fmv_clp'
+      - 'mv_grf'
+    Additional positional and keyword args are passed to the runner.
+    """
+    runner = ExperimentRunner()
+    method_map = {
+        'supervised': 'run_supervised_baseline',
+        'rule_space': 'run_rule_space_ssl',
+        'mf_space':    'run_mf_space_ssl',
+        'raw_space':   'run_raw_space_ssl',
+        'fmv_clp':     'run_fmv_clp',
+        'mv_grf':      'run_mv_grf',
+    }
+    if method not in method_map:
+        raise ValueError(f"Unknown method: {method}. Valid methods: {list(method_map.keys())}")
+    func_name = method_map[method]
+    func = getattr(runner, func_name)
+    # Call the runner method: first argument is model_instance when applicable
+    return func(model_instance, *args, **kwargs) if method == 'supervised' or method.endswith('space_ssl') else func(*args, **kwargs)

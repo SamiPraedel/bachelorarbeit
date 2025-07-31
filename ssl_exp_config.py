@@ -50,7 +50,7 @@ MODELS = [
             "max_rules": 1000,
             "epochs": 200,
             "lr": 5e-3,
-            "zeroG": False, # Add the missing zeroG parameter
+            "zeroG": True, # Add the missing zeroG parameter
         }
     },
     {

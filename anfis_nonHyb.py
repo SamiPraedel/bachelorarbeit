@@ -4,7 +4,7 @@ import numpy as np
 import random
 
 class NoHybridANFIS(nn.Module):
-    def __init__(self, input_dim, num_classes, num_mfs, max_rules, seed, zeroG):
+    def __init__(self, input_dim, num_classes, num_mfs, max_rules, seed, zeroG=False, topk_r=0.2):
        # num_mfs_tensor = torch.tensor[3,3,3,2,2,2]
         device = "cuda" if torch.cuda.is_available() else "cpu"
         seed = seed
@@ -39,7 +39,7 @@ class NoHybridANFIS(nn.Module):
             self.consequents = nn.Parameter(torch.rand(self.num_rules, input_dim + 1, num_classes))
         
         self.register_buffer("rule_idx", self.rules.t())  # shape [d, R]
-            
+        self.topk_r = topk_r
         
         # self.fc1 = nn.Linear(self.num_rules, 16)
         # self.act = nn.ReLU()
@@ -74,7 +74,7 @@ class NoHybridANFIS(nn.Module):
 
         fiering_strengths = torch.prod(rule_mfs, dim=1)  #[batch_size, num_rules]        
         
-        topk_p = 0.2
+        topk_p = self.topk_r
 
         K = max(1, int(topk_p * self.num_rules))
         vals, idx = torch.topk(fiering_strengths, k=K, dim=1)

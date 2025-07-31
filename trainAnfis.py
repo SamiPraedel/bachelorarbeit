@@ -8,7 +8,6 @@ from line_profiler import profile
 import matplotlib.pyplot as plt
 import os
 import torch._dynamo
-from collections import Counter
 
 # Assuming these files are in the Python path or same directory
 from anfis_hybrid import HybridANFIS
@@ -32,7 +31,7 @@ def train_anfis_noHyb(
     model.to(device)
     
     initialize_mfs_with_kmeans(model, X_all)  # X_train as np array
-    #initialize_mfs_with_fcm(model, X)
+    #initialize_mfs_with_fcm(model, X_all)  # X_train as np array
 
     model.widths.data *= 1.
 
@@ -59,28 +58,25 @@ def train_anfis_noHyb(
         epoch_loss = 0.0
         correct_train = 0
         total_train = 0
-        optimizer.zero_grad()
+
         model.train()
-        _,fs_all, mask_all = model(X_all)
-        lb_loss_all = model.load_balance_loss(fs_all, mask_all) 
-        lb_loss_all.backward()  # Compute load balance loss once per epoch
         
         for batch_X, batch_Y in dataloader:
              # Ensure model is in training mode
             batch_X = batch_X.to(device, non_blocking=True)
             batch_Y = batch_Y.to(device, non_blocking=True)
             outputs, firing_strengths, mask = model(batch_X)  # outputs: [batch_size, num_classes]
-           
             ce_loss = criterion(outputs, batch_Y)
-            #lb_loss  = model.load_balance_loss(firing_strengths, mask)
-            loss     = ce_loss + lb_loss_all
-            #print(lb_loss)
+            lb_loss  = model.load_balance_loss(firing_strengths, mask)
+            loss     = ce_loss + lb_loss
                       
-            
+            optimizer.zero_grad()
             loss.backward()
-            
+            optimizer.step()
             model.widths.data.clamp_(min=0.2, max=0.8)
             model.centers.data.clamp_(min=0, max=1)
+            
+
 
             # Accumulate loss for the epoch (inside batch loop)
             epoch_loss += loss.item() # Use .item() here as loss is a tensor
@@ -90,7 +86,7 @@ def train_anfis_noHyb(
             total_train += batch_Y.size(0)
             correct_train += (predicted_train == batch_Y).sum().item()
             
-        optimizer.step()
+
         # --- Code moved outside the batch loop ---
         #scheduler.step() # If uncommented, should be here
 
@@ -120,7 +116,7 @@ def train_anfis_noHyb(
             log_msg = f"Epoch [{epoch}/{num_epochs}], Train Loss: {avg_loss:.4f}, Train Acc: {train_accuracy:.2f}%"
             if X_val is not None and y_val is not None:
                 log_msg += f", Val Loss: {val_loss.item():.4f}, Val Acc: {val_accuracy:.2f}%"
-            print(log_msg)
+            #print(log_msg)
 
     # Optional: Rule pruning example (ensure 'cov' is defined if uncommented)
     # cov_thr = 0.002
@@ -132,7 +128,7 @@ def train_anfis_noHyb(
     # model.num_rules    = keep.sum().item()
     
     # ----- Plot training loss after training -----
-    fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+    """fig, axes = plt.subplots(1, 2, figsize=(15, 5))
     plot_epoch_curves(history, "loss", ax=axes[0], smooth=3)
     axes[0].set_title(f"Loss Curves for {model.__class__.__name__} (NoHybrid)")
     plot_epoch_curves(history, "acc", ax=axes[1], smooth=3)
@@ -144,7 +140,7 @@ def train_anfis_noHyb(
     plot_save_path = os.path.join(viz_dir, f"{model.__class__.__name__}_NoHybrid_training_curves.png")
     plt.savefig(plot_save_path)
     plt.close()
-    print(f"Training curves saved to {plot_save_path}")
+    print(f"Training curves saved to {plot_save_path}")"""
 
 
 
@@ -155,7 +151,7 @@ def train_anfis_hybrid(
     Y: torch.Tensor,
     X_all, # Added X_all for initialization 
     num_epochs: int, 
-    lr: float, # Note: lr is used for optimizer for MFs
+    lr = 0.01, # Note: lr is used for optimizer for MFs
     X_val: torch.Tensor = None, 
     y_val: torch.Tensor = None
 ):

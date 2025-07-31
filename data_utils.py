@@ -145,7 +145,117 @@ def load_shuttle_data(test_size=0.3, random_state=42):
 
     
     
+def load_pen_data(test_size=0.3, random_state=42):
+  
+    # fetch dataset 
+    pen_based_recognition_of_handwritten_digits = fetch_ucirepo(id=81) 
     
+    # data (as pandas dataframes) 
+    X = pen_based_recognition_of_handwritten_digits.data.features 
+    y = pen_based_recognition_of_handwritten_digits.data.targets 
+    
+     # Preprocess features
+    scaler = MinMaxScaler()
+    X_processed_np = scaler.fit_transform(X) 
+    X_processed_np = X_processed_np.astype(np.float32)
+    
+    # Preprocess targets
+    # y_df.values.ravel() converts the DataFrame column to a 1D NumPy array
+    le = LabelEncoder()
+    y_encoded_np = le.fit_transform(y.values.ravel()) # Encodes 'g'/'h' to 0/1
+    
+    # Split data into training and testing sets
+    X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
+        X_processed_np, y_encoded_np, 
+        test_size=test_size, 
+        shuffle=True, 
+        random_state=random_state,
+        stratify=y_encoded_np # Stratification is good for classification
+    )
+    
+    # Convert NumPy arrays to PyTorch tensors
+    X_train = torch.tensor(X_train_np, dtype=torch.float32)
+    y_train = torch.tensor(y_train_np, dtype=torch.long)
+    X_test  = torch.tensor(X_test_np, dtype=torch.float32)
+    y_test  = torch.tensor(y_test_np, dtype=torch.long)
+    
+
+
+    return X_train, y_train, X_test, y_test
+
+def load_block_data(test_size=0.3, random_state=42):
+    
+    page_blocks_classification = fetch_ucirepo(id=78) 
+  
+    # data (as pandas dataframes) 
+    X = page_blocks_classification.data.features 
+    y = page_blocks_classification.data.targets 
+    
+     # Preprocess features
+    scaler = MinMaxScaler()
+    X_processed_np = scaler.fit_transform(X) 
+    X_processed_np = X_processed_np.astype(np.float32)
+    
+    # Preprocess targets
+    # y_df.values.ravel() converts the DataFrame column to a 1D NumPy array
+    le = LabelEncoder()
+    y_encoded_np = le.fit_transform(y.values.ravel()) # Encodes 'g'/'h' to 0/1
+    
+    # Split data into training and testing sets
+    X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
+        X_processed_np, y_encoded_np, 
+        test_size=test_size, 
+        shuffle=True, 
+        random_state=random_state,
+        stratify=y_encoded_np # Stratification is good for classification
+    )
+    
+    # Convert NumPy arrays to PyTorch tensors
+    X_train = torch.tensor(X_train_np, dtype=torch.float32)
+    y_train = torch.tensor(y_train_np, dtype=torch.long)
+    X_test  = torch.tensor(X_test_np, dtype=torch.float32)
+    y_test  = torch.tensor(y_test_np, dtype=torch.long)
+    
+
+
+    return X_train, y_train, X_test, y_test
+
+def load_letter_data(test_size=0.3, random_state=42):
+    
+    letter_recognition = fetch_ucirepo(id=59) 
+  
+    # data (as pandas dataframes) 
+    X = letter_recognition.data.features 
+    y = letter_recognition.data.targets
+    
+     # Preprocess features
+    scaler = MinMaxScaler()
+    X_processed_np = scaler.fit_transform(X) 
+    X_processed_np = X_processed_np.astype(np.float32)
+    
+    # Preprocess targets
+    # y_df.values.ravel() converts the DataFrame column to a 1D NumPy array
+    le = LabelEncoder()
+    y_encoded_np = le.fit_transform(y.values.ravel()) # Encodes 'g'/'h' to 0/1
+    
+    # Split data into training and testing sets
+    X_train_np, X_test_np, y_train_np, y_test_np = train_test_split(
+        X_processed_np, y_encoded_np, 
+        test_size=test_size, 
+        shuffle=True, 
+        random_state=random_state,
+        stratify=y_encoded_np # Stratification is good for classification
+    )
+    
+    # Convert NumPy arrays to PyTorch tensors
+    X_train = torch.tensor(X_train_np, dtype=torch.float32)
+    y_train = torch.tensor(y_train_np, dtype=torch.long)
+    X_test  = torch.tensor(X_test_np, dtype=torch.float32)
+    y_test  = torch.tensor(y_test_np, dtype=torch.long)
+    
+
+
+    return X_train, y_train, X_test, y_test
     
 
 

@@ -25,13 +25,13 @@ class FMNC:
         self.m_min = m_min
         self.V = self.W = self.cls = None   # Box-Container
 
-    # ---------- NEU: k-Means-Seeding -------------------------------
+
     def seed_boxes_kmeans(self, X: Tensor, y: Tensor, k: int = 3, random_state: int = 42):
         """Erzeuge pro Klasse k Start-Boxen (V = W = Cluster-Center)."""
         from sklearn.cluster import KMeans
 
-        X_np = X.cpu().numpy()
-        y_np = y.cpu().numpy()
+        X_np = X
+        y_np = y
 
         for c in np.unique(y_np):
             X_c = X_np[y_np == c]
@@ -39,12 +39,12 @@ class FMNC:
             km = KMeans(n_clusters=k_eff, n_init="auto", random_state=random_state)
             km.fit(X_c)
 
-            centers = torch.tensor(km.cluster_centers_,
-                                   dtype=X.dtype, device=self.dev)
+            centers = torch.tensor(km.cluster_centers_, device=self.dev)
             for center in centers:
                 self._add_box(center, int(c))
 
-    # ---------------------------------------------------------------
+
+
     def _memb_batch(self, X: Tensor) -> Tensor:
         V, W = self.V, self.W
         left  = 1 - self.g * torch.clamp(V.unsqueeze(0) - X.unsqueeze(1), min=0)
@@ -125,7 +125,7 @@ class FMNC:
                 self.V[j, i], self.W[j, i] = vj, wj
                 self.V[k, i], self.W[k, i] = vk, wk
     
-    def fit(self, X: Tensor, y: Tensor, epochs: int = 3, shuffle: bool = True):
+    def fit(self, X: Tensor, y: Tensor, epochs: int = 1, shuffle: bool = True):
         X, y = X.to(self.dev), y.to(self.dev)
         for ep in range(epochs):
             idx = torch.randperm(len(X)) if shuffle else torch.arange(len(X))
@@ -209,6 +209,41 @@ class FMNC:
         # sklearn's matthews_corrcoef handles cases where MCC is undefined by returning 0.0
         mcc = matthews_corrcoef(y_true_cpu, y_pred_cpu)
         return float(mcc)
+
+    # -----------------------------------------------------------
+    @torch.no_grad()
+    def membership(self, X, batch_size: int | None = None, to_numpy: bool = True):
+        """
+        Public helper that returns the membership degree of each sample to
+        every hyper‑box (same values as `_get_rule_activations`).
+
+        Parameters
+        ----------
+        X : array‑like or torch.Tensor, shape [N, d]
+            Input data in the same feature space used during training.
+        batch_size : int, optional
+            If given, overrides the internal self.bs for memory‑friendly
+            batching.
+        to_numpy : bool, default True
+            If True (default) the result is returned as a NumPy array;
+            otherwise as a **CPU** torch.Tensor.
+
+        Returns
+        -------
+        mem : ndarray | torch.Tensor, shape [N, n_boxes]
+            Membership degrees (∈[0,1]) of every sample to every hyper‑box.
+        """
+        if not isinstance(X, torch.Tensor):
+            X = torch.as_tensor(X, dtype=torch.float32)
+
+        bs = batch_size or self.bs
+        out_chunks = []
+        for s in range(0, len(X), bs):
+            xb = X[s:s + bs].to(self.dev, non_blocking=True)
+            out_chunks.append(self._memb_batch(xb).cpu())
+
+        mem = torch.cat(out_chunks, dim=0)
+        return mem.numpy() if to_numpy else mem
 
 # ---------------------------------------------------------------
 if __name__ == "__main__":

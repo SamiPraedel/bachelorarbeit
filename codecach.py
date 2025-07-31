@@ -20,24 +20,15 @@ from sklearn import metrics
 from sklearn.neighbors import kneighbors_graph
 from sklearn.metrics import accuracy_score
 from sklearn.neighbors import NearestNeighbors, KNeighborsClassifier
-from sklearn.preprocessing import StandardScaler
 from sklearn.semi_supervised import LabelPropagation, LabelSpreading
 from torch.utils.data import DataLoader, TensorDataset
 from anfisHelper import initialize_mfs_with_kmeans
-from trainAnfis import train_anfis_noHyb
 import itertools
-import pandas as pd
-from anfisHelper import _dbg
+import pandas as pd  # for CSV export
+from trainAnfis import train_anfis_noHyb
+
 # Global results list for all experiments/results
 results_rows = []
-
-
-# ------------------------------------------------------------------
-#  Debug helper: prints basic stats and NaN / Inf counts
-# ------------------------------------------------------------------
-
-# ------------------------------------------------------------------
-
 
 class GraphSSL(BaseEstimator, ClassifierMixin):
     """
@@ -91,21 +82,16 @@ class GraphSSL(BaseEstimator, ClassifierMixin):
 
     def _build_knn_graph(self, X):
         """Builds the k-NN graph and the affinity matrix W."""
-        dist = torch.cdist(X, X, p=2)          # (n,n)
-        _, idx = torch.topk(dist, k=self.k+1, dim=1, largest=False)
-        idx = idx[:,1:]
-        n = X.size(0)
-        row = torch.arange(n, device=self.device).unsqueeze(1).expand(-1,self.k)
-        neighbor_dist_sq = dist[row, idx]
-        dist2 = neighbor_dist_sq ** 2
-        weights = torch.exp(-dist2 / (2 * self.sigma ** 2))
-        W = torch.zeros(n, n, device=self.device)
-        W[row.cpu(), idx] = weights
-        W = (W + W.T) / 2
-        deg = W.sum(dim=1, keepdim=True)
-        W  = W / (deg + 1e-12)
-        _dbg("GraphSSL W", W)
-        return W
+        distances_sq = self.distance(X, metic=self.distance_metric)
+        _, indices = torch.topk(distances_sq, k=self.k + 1, dim=1, largest=False)
+        neighbors_idx = indices[:, 1:]
+        n_samples = X.shape[0]
+        row_indices = torch.arange(n_samples, device=self.device).unsqueeze(1).expand(-1, self.k)
+        neighbor_dist_sq = torch.gather(distances_sq, 1, neighbors_idx)
+        weights = torch.exp(-neighbor_dist_sq / (2 * self.sigma**2))
+        W = torch.zeros(n_samples, n_samples, device=self.device)
+        W[row_indices.cpu(), neighbors_idx] = weights
+        return (W + W.T) / 2
     
     
     def fit_mf_space(self, X, y):
@@ -146,6 +132,24 @@ class GraphSSL(BaseEstimator, ClassifierMixin):
             Y_[y_cpu == cls, i] = 1
         labeled_mask = (y != -1)
         return X, y, Y_, labeled_mask
+
+    # def fit_iterative(self, X, y):
+    #     """Fits using iterative Label Propagation on a k-NN graph."""
+    #     X, y, Y_init, labeled_mask = self._prepare_fit(X, y)
+    #     #W = self._build_knn_graph(X)
+    #     W = self.build_sparse_knn_graph_sklearn(X)
+    #     D = torch.diag(W.sum(axis=1))
+    #     D_inv_sqrt = torch.diag(1.0 / (torch.sqrt(torch.diag(D)) + 1e-9))
+    #     S = D_inv_sqrt @ W @ D_inv_sqrt
+    #     F = Y_init.clone()
+    #     for i in range(self.max_iter):
+    #         F_old = F.clone()
+    #         # Update step with teleportation
+    #         F = self.alpha * (S @ F) + (1 - self.alpha) * Y_init
+    #         if torch.abs(F - F_old).sum() < self.tol: break
+    #     self.label_distributions_ = F
+    #     self.transduction_ = self.classes_[torch.argmax(self.label_distributions_, axis=1).cpu().numpy()]
+    #     return self
     
     
     def fit_iterative(self, X, y):
@@ -253,26 +257,19 @@ class GraphSSL(BaseEstimator, ClassifierMixin):
         X, y, Y_, labeled_mask = self._prepare_fit(X, y)
         unlabeled_mask = ~labeled_mask
         W = self._build_knn_graph(X)
-        # symmetric normalized Laplacian
-        deg = W.sum(dim=1)
-        D_inv_sqrt = torch.diag(1.0 / torch.sqrt(deg + 1e-12))
-        S = D_inv_sqrt @ W @ D_inv_sqrt   # normalised affinity
-        L = torch.eye(W.size(0), device=W.device, dtype=W.dtype) - S
+        D = torch.diag(W.sum(axis=1))
+        L = D - W
         L_uu = L[unlabeled_mask, :][:, unlabeled_mask]
         L_ul = L[unlabeled_mask, :][:, labeled_mask]
         f_l = Y_[labeled_mask]
-        # --- right‑hand side 
+        #b = -L_ul @ f_l   
         b = (-L_ul @ f_l).to(dtype=L_uu.dtype, device=L_uu.device)   # [U,C]
         n_u = L_uu.shape[0]
-        eps  = 1e-3            # a bit larger for safety
+        eps  = 1e-4            # a bit larger for safety
         I_U  = torch.eye(n_u, dtype=L_uu.dtype, device=L_uu.device)
         A    = L_uu + eps * I_U     # [U,U]
-        #  solve A · F_u = b  column‑wise 
-        try:
-            f_u = torch.linalg.solve(A, b)            # fast path
-        except RuntimeError:
-            # fall back to least‑squares if A is near‑singular
-            f_u, *_ = torch.linalg.lstsq(A, b)
+        f_u = torch.linalg.solve(A, b)
+        #f_u = torch.linalg.solve(L_uu, b)
         self.label_distributions_ = torch.zeros_like(Y_)
         self.label_distributions_[labeled_mask] = f_l
         self.label_distributions_[unlabeled_mask] = F.softmax(f_u, dim=1)
@@ -509,255 +506,6 @@ def mv_grf_predict(
 
     return y_hat, F_final.cpu()
 
-def aw_mv_grf_predict(
-        M, R, y_init,
-        k: int = 10,
-        sigma_M: float = 1.0,
-        sigma_R: float = 1.0,
-        reg_eps: float = 1e-5,
-        max_outer: int = 10,
-        device: str = "cpu"):
-    """
-    Auto‑Weighted Multi‑View Gaussian Random Field (AW‑MV‑GRF).
-
-    Learns per‑view weights θ_M, θ_R by minimising graph smoothness:
-        min_F  Σ_v θ_v · tr(Fᵀ L_v F)   s.t.  θ_M+θ_R=1, θ_v≥0
-    implemented via alternating optimisation:
-        • F‑step: GRF closed‑form on L = θ_M·L_M + θ_R·L_R
-        • θ‑step: θ_v ∝ (tr(Fᵀ L_v F))^‑½
-
-    Returns
-    -------
-    y_hat   : np.ndarray  hard labels
-    F_final : torch.Tensor [n,C] soft scores
-    """
-    import scipy.sparse as sp  # local import
-    if isinstance(M, torch.Tensor): M = M.cpu().numpy()
-    if isinstance(R, torch.Tensor): R = R.cpu().numpy()
-    if isinstance(y_init, torch.Tensor): y_init = y_init.cpu().numpy()
-
-    n = M.shape[0]
-    classes = np.unique(y_init[y_init >= 0])
-    C = len(classes)
-    class_map = {c: i for i, c in enumerate(classes)}
-
-    # --- k‑NN graphs & Laplacians per view ------------------------------
-    W_M = _build_knn_rbf(M, k, sigma_M)
-    W_R = _build_knn_rbf(R, k, sigma_R)
-
-    d_M = np.asarray(W_M.sum(axis=1)).flatten()
-    d_R = np.asarray(W_R.sum(axis=1)).flatten()
-    L_M = sp.diags(d_M) - W_M
-    L_R = sp.diags(d_R) - W_R
-
-    labeled_mask   = (y_init >= 0)
-    idx_L          = np.where(labeled_mask)[0]
-    idx_U          = np.where(~labeled_mask)[0]
-
-    # Seed matrix F_L
-    f_l = torch.zeros(len(idx_L), C, device=device)
-    y_l_mapped = np.array([class_map[lbl] for lbl in y_init[idx_L]])
-    f_l[torch.arange(len(idx_L)), torch.from_numpy(y_l_mapped)] = 1.0
-
-    theta_M, theta_R = 0.5, 0.5
-
-    for _ in range(max_outer):
-        # ---------------- F‑step (solve GRF) ----------------------------
-        L     = theta_M * L_M + theta_R * L_R
-        L_uu  = L[idx_U][:, idx_U]
-        L_ul  = L[idx_U][:, idx_L]
-
-        I_uu  = sp.identity(L_uu.shape[0], format='csr') * reg_eps
-        A     = L_uu + I_uu
-        b     = -L_ul @ f_l.cpu().numpy()
-
-        f_u_cols = [sp.linalg.cg(A, b[:, c])[0] for c in range(C)]
-        f_u      = torch.from_numpy(np.vstack(f_u_cols).T).float().to(device)
-
-        F_final = torch.zeros(n, C, device=device)
-        F_final[idx_L] = f_l
-        F_final[idx_U] = F.softmax(f_u, dim=1)
-
-        # ---------------- θ‑step (closed form) --------------------------
-        F_np = F_final.cpu().numpy()
-        s_M  = np.einsum('ij,ij->', F_np, (L_M @ F_np))
-        s_R  = np.einsum('ij,ij->', F_np, (L_R @ F_np))
-
-        wM = (s_M + 1e-12) ** -0.5
-        wR = (s_R + 1e-12) ** -0.5
-        theta_M = wM / (wM + wR)
-        theta_R = 1.0 - theta_M
-
-    y_hat_idx = F_final.argmax(dim=1).cpu().numpy()
-    idx2cls   = {v: k for k, v in class_map.items()}
-    y_hat     = np.vectorize(idx2cls.get)(y_hat_idx)
-    return y_hat, F_final.cpu()
-
-
-# --- CLC-MV-GRF Algorithm ---
-def clc_mv_grf_predict(
-        M, R, y_init,
-        k: int = 10,
-        sigma_M: float = 1.0,
-        sigma_R: float = 1.0,
-        gamma: float = 1.0,
-        reg_eps: float = 1e-5,
-        max_outer: int = 10,
-        device: str = "cpu"):
-    """
-    Coupled‑Laplacian Consensus GRF (CLC‑GRF).
-    Solves for two label‑score matrices F_M, F_R (one per view) with a
-    *consensus penalty* ‖F_M − F_R‖² rather than mixing Laplacians.
-
-        min_{F_M,F_R}  tr(F_Mᵀ L_M F_M) + tr(F_Rᵀ L_R F_R)
-                       + γ‖F_M − F_R‖_F²
-        s.t. F_M[L] = F_R[L] = Y_L
-    Alternating closed‑form:
-        (L_M_uu + γI) F_M_U = −L_M_ul Y_L + γ F_R_U
-        (L_R_uu + γI) F_R_U = −L_R_ul Y_L + γ F_M_U
-
-    Parameters
-    ----------
-    M, R    : view feature matrices  [n,d_M]  /  [n,d_R]
-    y_init  : label vector with −1 for unlabeled
-    k       : k‑NN
-    sigma_* : RBF kernel width per view
-    gamma   : consensus strength
-    reg_eps : small diagonal fudge
-    """
-    import scipy.sparse as sp
-    if isinstance(M, torch.Tensor): M = M.cpu().numpy()
-    if isinstance(R, torch.Tensor): R = R.cpu().numpy()
-    if isinstance(y_init, torch.Tensor): y_init = y_init.cpu().numpy()
-
-    n = M.shape[0]
-    classes = np.unique(y_init[y_init >= 0])
-    C = len(classes)
-    class_map = {c: i for i, c in enumerate(classes)}
-
-    # 1) graphs & Laplacians
-    W_M = _build_knn_rbf(M, k, sigma_M)
-    W_R = _build_knn_rbf(R, k, sigma_R)
-    D_M = np.asarray(W_M.sum(axis=1)).flatten()
-    D_R = np.asarray(W_R.sum(axis=1)).flatten()
-    L_M = sp.diags(D_M) - W_M
-    L_R = sp.diags(D_R) - W_R
-
-    labeled_mask   = (y_init >= 0)
-    unlabeled_mask = ~labeled_mask
-    idx_L = np.where(labeled_mask)[0]
-    idx_U = np.where(unlabeled_mask)[0]
-
-    # 2) seed matrix Y_L  (torch tensor on device)
-    f_l = torch.zeros(len(idx_L), C, device=device)
-    y_l_mapped = np.array([class_map[lbl] for lbl in y_init[idx_L]])
-    f_l[torch.arange(len(idx_L)), torch.from_numpy(y_l_mapped)] = 1.0
-
-    # 3) pre‑assemble system matrices
-    L_M_uu = L_M[idx_U][:, idx_U]
-    L_M_ul = L_M[idx_U][:, idx_L]
-    L_R_uu = L_R[idx_U][:, idx_U]
-    L_R_ul = L_R[idx_U][:, idx_L]
-
-    I_uu = sp.identity(len(idx_U), format='csr')
-    A_M = L_M_uu + (gamma + reg_eps) * I_uu
-    A_R = L_R_uu + (gamma + reg_eps) * I_uu
-    rhs_M_seed = -L_M_ul @ f_l.cpu().numpy()
-    rhs_R_seed = -L_R_ul @ f_l.cpu().numpy()
-
-    # 4) initialise F_U for both views (zeros)
-    F_M_U = np.zeros((len(idx_U), C), dtype=np.float32)
-    F_R_U = np.zeros((len(idx_U), C), dtype=np.float32)
-
-    # 5) outer iterations
-    for _ in range(max_outer):
-        # solve for F_M_U
-        b_M = rhs_M_seed + gamma * F_R_U
-        F_M_U = np.vstack([sp.linalg.cg(A_M, b_M[:, c])[0] for c in range(C)]).T
-
-        # solve for F_R_U
-        b_R = rhs_R_seed + gamma * F_M_U
-        F_R_U = np.vstack([sp.linalg.cg(A_R, b_R[:, c])[0] for c in range(C)]).T
-
-    # 6) assemble final F = average
-    F_final = torch.zeros(n, C, device=device)
-    F_final[idx_L] = f_l
-    final_f_u = ((F_M_U + F_R_U) * 0.5).astype(np.float32)
-    F_final[idx_U] = torch.from_numpy(final_f_u).to(device)
-    #F_final[idx_U] = torch.from_numpy((F_M_U + F_R_U) * 0.5).to(device)
-
-    y_hat_idx = F_final.argmax(1).cpu().numpy()
-    idx2cls = {v: k for k, v in class_map.items()}
-    y_hat = np.vectorize(idx2cls.get)(y_hat_idx)
-    return y_hat, F_final.cpu()
-
-# --- FAP Algorithm ---
-def fap_predict(M: np.ndarray, R: np.ndarray, y_init: np.ndarray,
-                *, k: int = 10,
-                sigma_M: float = 1.0, sigma_R: float = 1.0,
-                alpha: float = 0.9, max_iter: int = 100,
-                tol: float = 1e-6, device: str = "cpu"):
-    """
-    Fuzzy AND‑Propagation (FAP): element‑wise 'AND' fusion of MF‑ and Rule‑view graphs
-    followed by iterative label propagation.
-    Returns
-    -------
-    y_hat : np.ndarray        – hard labels (length n)
-    F     : torch.Tensor [n,C] – soft label scores
-    """
-    assert M.shape[0] == R.shape[0] == y_init.shape[0]
-    if isinstance(M, torch.Tensor): M = M.cpu().numpy()
-    if isinstance(R, torch.Tensor): R = R.cpu().numpy()
-    if isinstance(y_init, torch.Tensor): y_init = y_init.cpu().numpy()
-
-    n = M.shape[0]
-    classes = np.unique(y_init[y_init != -1])
-    C = len(classes)
-    class_map = {c: i for i, c in enumerate(classes)}
-
-    # --- 1) k‑NN graphs for both views (SciPy CSR) -----------------------
-    W_M = _build_knn_rbf_graph(M, k, sigma_M)
-    W_R = _build_knn_rbf_graph(R, k, sigma_R)
-
-    # --- 2) AND‑Fusion ----------------------------------------------------
-    W = W_M.multiply(W_R)            # element‑wise product (keeps sparsity)
-
-    print(f"[DBG] FAP fusion | nnz={W.nnz} | NaN-edges={np.isnan(W.data).sum()}")
-
-    # If the product zeroed out all edges for a node, fall back to OR
-    dangling = (np.asarray(W.sum(1)).flatten() == 0)
-    if dangling.any():
-        W[dangling] = 0.5 * (W_M[dangling] + W_R[dangling])
-
-    # --- 3) Row‑stochastic transition matrix S ---------------------------
-    S_csr = _row_normalise_sparse(W)
-
-    # --- 4) Torch sparse tensor ------------------------------------------
-    coo = S_csr.tocoo()
-    idx = torch.vstack((torch.from_numpy(coo.row),
-                        torch.from_numpy(coo.col)))
-    val = torch.from_numpy(coo.data)
-    S_t = torch.sparse_coo_tensor(idx, val, size=S_csr.shape,
-                                  device=device, dtype=torch.float32)
-
-    # --- 5) Seed matrix Y0 -----------------------------------------------
-    Y0 = torch.zeros((n, C), dtype=torch.float32, device=device)
-    for i, lbl in enumerate(y_init):
-        if lbl != -1:
-            Y0[i, class_map[lbl]] = 1.
-
-    F = Y0.clone()
-    for _ in range(max_iter):
-        F_old = F.clone()
-        F = alpha * torch.sparse.mm(S_t, F) + (1 - alpha) * Y0
-        if torch.norm(F - F_old, p=1) < tol:
-            break
-
-    y_hat_idx = F.argmax(1).cpu().numpy()
-    idx2cls = {v: k for k, v in class_map.items()}
-    y_hat = np.vectorize(idx2cls.get)(y_hat_idx)
-    return y_hat, F
-
 def feature_extraction(model, X, epochs=100):
     if isinstance(model, NoHybridANFIS):
         # For NoHybridANFIS, we can directly use the forward pass
@@ -765,3 +513,315 @@ def feature_extraction(model, X, epochs=100):
         with torch.no_grad():
             _, rule_activations, _ = model(X)
         return rule_activations.cpu().numpy()
+    
+    
+    
+    
+    
+    
+    
+    
+
+if __name__ == '__main__':
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Using device: {device}")
+    
+    X_train, y_train, X_test, y_test = load_K_chess_data_splitted()
+    #X_train, y_train, X_test, y_test = load_htru_data()
+    #X_train, y_train, X_test, y_test = load_letter_data()
+    
+    
+    
+    n_labeled = int(0.1 * len(y_train))
+    np.random.seed(42)
+    labeled_indices = np.random.choice(np.arange(len(y_train)), size=n_labeled, replace=False)
+    y_semi_sup = np.full(len(y_train), -1, dtype=np.int64)
+    y_semi_sup[labeled_indices] = y_train[labeled_indices]
+    
+    X_l, y_l = X_train[labeled_indices], y_train[labeled_indices]
+    
+   
+    
+    #  Experiment 1: NoHybridANFIS ---
+    anfis_model = NoHybridANFIS(
+        input_dim=X_train.shape[1],
+        num_classes=len(y_train.unique()), num_mfs=4, max_rules=100,
+        seed=42
+    ).to(device)
+    
+    anfis_model_train = NoHybridANFIS(
+        input_dim=X_train.shape[1],
+        num_classes=len(y_train.unique()), num_mfs=4, max_rules=100,
+        seed=42
+    ).to(device)
+    
+    initialize_mfs_with_kmeans(anfis_model_train, X_train)
+    
+    train_anfis_noHyb(anfis_model, X_l.to(device), y_l.to(device), X_train, num_epochs=400, lr=0.01)
+
+    # Supervised Baseline Test 
+    print("\n--- Running Supervised Baseline (ANFIS trained on 10% data) ---")
+    anfis_model.eval()
+    with torch.no_grad():
+        logits_test, _, _ = anfis_model(X_test.to(device))
+        preds_test = logits_test.argmax(1).cpu()
+        baseline_acc = accuracy_score(y_test.numpy(), preds_test.numpy())
+    print(f"  Final Test Accuracy (Supervised Baseline): {baseline_acc * 100:.2f}%")
+    
+    
+    
+    
+    
+    print("\n Supervised Random Forest")
+    rf_baseline = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+    # scikit-learn models work with numpy arrays on the CPU
+    rf_baseline.fit(X_l.cpu().numpy(), y_l.cpu().numpy())
+    y_pred_rf = rf_baseline.predict(X_test.cpu().numpy())
+    rf_acc = accuracy_score(y_test.numpy(), y_pred_rf)
+    print(f"  Final Test Accuracy (Supervised RF Baseline): {rf_acc * 100:.2f}%")
+    
+    
+    
+    
+    models = [anfis_model]
+    # --- END NEW PART ---
+    
+    for anfis_model in models:
+        
+        anfis_model.eval()
+        with torch.no_grad():
+            _, rule_activations_train, _ = anfis_model(X_train.to(device))
+            _, rule_activations_test, _ = anfis_model(X_test.to(device))
+            mf_values_train = anfis_model._fuzzify(X_train.to(device))
+            mf_values_test = anfis_model._fuzzify(X_test.to(device))
+        
+
+        
+
+        # --- Test Rule-Space SSL ---
+        print(" Running SSL with: Rule-Space GRF ---")
+        ssl_rule_model = GraphSSL(k=15, sigma=0.3, method='grf', device=device)
+        ssl_rule_model.fit(rule_activations_train, y_semi_sup)
+        unlabeled_mask = (y_semi_sup == -1)
+        pseudo_label_acc = accuracy_score(y_train.numpy()[unlabeled_mask], ssl_rule_model.transduction_[unlabeled_mask])
+        print(f"  Pseudo-Label Accuracy: {pseudo_label_acc * 100:.2f}%")
+        y_pred = ssl_rule_model.predict(rule_activations_test)
+        test_acc = accuracy_score(y_test.numpy(), y_pred)
+        print(f"  Final Test Accuracy (Rule-Space): {test_acc * 100:.2f}%")
+        
+        # --- Test MF-Space SSL ---
+        print(" Running SSL with: MF-Space GRF ---")
+        ssl_mf_model = GraphSSL(k=15, sigma=0.3, method='mf_space', device=device)
+        ssl_mf_model.fit(mf_values_train, y_semi_sup)
+        pseudo_label_acc_mf = accuracy_score(y_train.numpy()[unlabeled_mask], ssl_mf_model.transduction_[unlabeled_mask])
+        print(f"  Pseudo-Label Accuracy: {pseudo_label_acc_mf * 100:.2f}%")
+        y_pred_mf = ssl_mf_model.predict(mf_values_test)
+        test_acc_mf = accuracy_score(y_test.numpy(), y_pred_mf)
+        print(f"  Final Test Accuracy (MF-Space): {test_acc_mf * 100:.2f}%")
+        
+        
+        
+        rule_activations_train_np = rule_activations_train.cpu().numpy()
+        rule_activations_test_np = rule_activations_test.cpu().numpy()
+        mf_values_train_flat_np = mf_values_train.reshape(mf_values_train.shape[0], -1).cpu().numpy()
+        mf_values_test_flat_np = mf_values_test.reshape(mf_values_test.shape[0], -1).cpu().numpy()
+        X_train_np = X_train.cpu().numpy()
+        X_test_np = X_test.cpu().numpy()
+        
+        
+        # --- Test Rule-Space SSL with sklearn ---
+        print("\n--- Running SSL with: Rule-Space LabelPropagation (sklearn) ---")
+        lp_rule_model = LabelPropagation(kernel='knn', n_neighbors=15)
+        lp_rule_model.fit(rule_activations_train_np, y_semi_sup)
+        pseudo_label_acc = accuracy_score(y_train.numpy()[unlabeled_mask], lp_rule_model.transduction_[unlabeled_mask])
+        print(f"  Pseudo-Label Accuracy: {pseudo_label_acc * 100:.2f}%")
+        y_pred = lp_rule_model.predict(rule_activations_test_np)
+        test_acc = accuracy_score(y_test.numpy(), y_pred)
+        print(f"  Final Test Accuracy (Rule-Space): {test_acc * 100:.2f}%")
+        
+        # --- Test MF-Space SSL with sklearn ---
+        print("\n--- Running SSL with: MF-Space LabelPropagation (sklearn) ---")
+        lp_mf_model = LabelPropagation(kernel='knn', n_neighbors=10)
+        lp_mf_model.fit(mf_values_train_flat_np, y_semi_sup)
+        pseudo_label_acc_mf = accuracy_score(y_train.numpy()[unlabeled_mask], lp_mf_model.transduction_[unlabeled_mask])
+        print(f"  Pseudo-Label Accuracy: {pseudo_label_acc_mf * 100:.2f}%")
+        y_pred_mf = lp_mf_model.predict(mf_values_test_flat_np)
+        test_acc_mf = accuracy_score(y_test.numpy(), y_pred_mf)
+        print(f"  Final Test Accuracy (MF-Space): {test_acc_mf * 100:.2f}%")
+
+
+        # --- Raw Data SSL Baseline with sklearn ---
+        print("\n--- Running SSL with: Raw-Space LabelPropagation (sklearn) ---")
+        lp_raw_model = LabelPropagation(kernel='knn', n_neighbors=15)
+        lp_raw_model.fit(X_train_np, y_semi_sup)
+        pseudo_label_acc_raw = accuracy_score(y_train.numpy()[unlabeled_mask], lp_raw_model.transduction_[unlabeled_mask])
+        print(f"  Pseudo-Label Accuracy: {pseudo_label_acc_raw * 100:.2f}%")
+        y_pred_raw = lp_raw_model.predict(X_test_np)
+        test_acc_raw = accuracy_score(y_test.numpy(), y_pred_raw)
+        print(f"  Final Test Accuracy (Raw-Space): {test_acc_raw * 100:.2f}%")
+
+        # --- FMV‑CLP (MF + Rule Views) ---
+        print("\n--- Running SSL with: FMV‑CLP (MF + Rule) ---")
+        combined_train = np.hstack([mf_values_train_flat_np, rule_activations_train_np])
+        combined_test  = np.hstack([mf_values_test_flat_np,  rule_activations_test_np])
+        y_hat_fmv, _ = fmv_clp(M=mf_values_train_flat_np,
+                               R=rule_activations_train_np,
+                               y_init=y_semi_sup,
+                               k=15, sigma_M=0.3, sigma_R=0.3,
+                               beta=0.5)
+        knn = KNeighborsClassifier(n_neighbors=15)
+        knn.fit(combined_train, y_hat_fmv)
+        y_pred_fmv = knn.predict(combined_test)
+        acc_fmv = accuracy_score(y_test.numpy(), y_pred_fmv)
+        print(f"  Final Test Accuracy (FMV-CLP): {acc_fmv * 100:.2f}%")
+
+        # --- MV‑GRF (MF + Rule Views) ---
+        print("\n--- Running SSL with: MV‑GRF (MF + Rule) ---")
+        y_hat_mv, _ = mv_grf_predict(M=mf_values_train_flat_np,
+                                     R=rule_activations_train_np,
+                                     y_init=y_semi_sup,
+                                     k=15, sigma_M=0.3, sigma_R=0.3,
+                                     beta=0.5)
+        knn = KNeighborsClassifier(n_neighbors=15)
+        knn.fit(combined_train, y_hat_mv)
+        y_pred_mv = knn.predict(combined_test)
+        acc_mv = accuracy_score(y_test.numpy(), y_pred_mv)
+        print(f"  Final Test Accuracy (MV-GRF): {acc_mv * 100:.2f}%")
+
+    
+    """device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    print(f"Using device: {device}")
+    
+    #X_train, y_train, X_test, y_test = load_K_chess_data_splitted()
+    X_train, y_train, X_test, y_test = load_htru_data()
+    #X_train, y_train, X_test, y_test = load_letter_data()
+    
+    
+    
+    n_labeled = int(0.1 * len(y_train))
+    np.random.seed(42)
+    labeled_indices = np.random.choice(np.arange(len(y_train)), size=n_labeled, replace=False)
+    y_semi_sup = np.full(len(y_train), -1, dtype=np.int64)
+    y_semi_sup[labeled_indices] = y_train[labeled_indices]
+    
+    X_l, y_l = X_train[labeled_indices], y_train[labeled_indices]
+    
+   
+   
+   
+   
+   
+   
+   
+   
+    
+    # --- Experiment 1: NoHybridANFIS ---
+    print("\n\n--- EXPERIMENT 1: Using NoHybridANFIS as Feature Extractor ---")
+    anfis_model = NoHybridANFIS(
+        input_dim=X_train.shape[1],
+        num_classes=len(y_train.unique()), num_mfs=4, max_rules=100,
+        seed=42
+    ).to(device)
+    
+    #initialize_mfs_with_kmeans(anfis_model, X_l)
+    
+    optimizer = torch.optim.Adam(anfis_model.parameters(), lr=0.01)
+    for epoch in range(100):
+        anfis_model.train()
+        optimizer.zero_grad()
+        logits, _, _ = anfis_model(X_l.to(device))
+        loss = F.cross_entropy(logits, y_l.to(device))
+        loss.backward()
+        optimizer.step()
+
+    # --- NEW: Supervised Baseline Test ---
+    print("\n--- Running Supervised Baseline (ANFIS trained on 10% data) ---")
+    anfis_model.eval()
+    with torch.no_grad():
+        logits_test, _, _ = anfis_model(X_test.to(device))
+        preds_test = logits_test.argmax(1).cpu()
+        baseline_acc = accuracy_score(y_test.numpy(), preds_test.numpy())
+    print(f"  Final Test Accuracy (Supervised Baseline): {baseline_acc * 100:.2f}%")
+    # --- END NEW PART ---
+
+    anfis_model.eval()
+    with torch.no_grad():
+        _, rule_activations_train, _ = anfis_model(X_train.to(device))
+        _, rule_activations_test, _ = anfis_model(X_test.to(device))
+        mf_values_train = anfis_model._fuzzify(X_train.to(device))
+        mf_values_test = anfis_model._fuzzify(X_test.to(device))
+
+    print(f"Shape of ANFIS rule space: {rule_activations_train.shape}")
+    print(f"Shape of ANFIS MF space: {mf_values_train.shape}")
+    
+    print("\n\n--- EXPERIMENT 3: Supervised Random Forest (trained on 50% data) ---")
+    rf_baseline = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
+    # scikit-learn models work with numpy arrays on the CPU
+    rf_baseline.fit(X_l.cpu().numpy(), y_l.cpu().numpy())
+    y_pred_rf = rf_baseline.predict(X_test.cpu().numpy())
+    rf_acc = accuracy_score(y_test.numpy(), y_pred_rf)
+    print(f"  Final Test Accuracy (Supervised RF Baseline): {rf_acc * 100:.2f}%")
+    
+    
+
+    # --- Test Rule-Space SSL ---
+    print("\n--- Running SSL with: Rule-Space GRF ---")
+    ssl_rule_model = GraphSSL(k=15, sigma=0.3, method='grf', device=device)
+    ssl_rule_model.fit(rule_activations_train, y_semi_sup)
+    unlabeled_mask = (y_semi_sup == -1)
+    pseudo_label_acc = accuracy_score(y_train.numpy()[unlabeled_mask], ssl_rule_model.transduction_[unlabeled_mask])
+    print(f"  Pseudo-Label Accuracy: {pseudo_label_acc * 100:.2f}%")
+    y_pred = ssl_rule_model.predict(rule_activations_test)
+    test_acc = accuracy_score(y_test.numpy(), y_pred)
+    print(f"  Final Test Accuracy (Rule-Space): {test_acc * 100:.2f}%")
+    
+    # --- Test MF-Space SSL ---
+    print("\n--- Running SSL with: MF-Space GRF ---")
+    ssl_mf_model = GraphSSL(k=15, sigma=0.3, method='mf_space', device=device)
+    ssl_mf_model.fit(mf_values_train, y_semi_sup)
+    pseudo_label_acc_mf = accuracy_score(y_train.numpy()[unlabeled_mask], ssl_mf_model.transduction_[unlabeled_mask])
+    print(f"  Pseudo-Label Accuracy: {pseudo_label_acc_mf * 100:.2f}%")
+    y_pred_mf = ssl_mf_model.predict(mf_values_test)
+    test_acc_mf = accuracy_score(y_test.numpy(), y_pred_mf)
+    print(f"  Final Test Accuracy (MF-Space): {test_acc_mf * 100:.2f}%")
+    
+    
+    
+    
+    rule_activations_train_np = rule_activations_train.cpu().numpy()
+    rule_activations_test_np = rule_activations_test.cpu().numpy()
+    mf_values_train_flat_np = mf_values_train.reshape(mf_values_train.shape[0], -1).cpu().numpy()
+    mf_values_test_flat_np = mf_values_test.reshape(mf_values_test.shape[0], -1).cpu().numpy()
+    X_train_np = X_train.cpu().numpy()
+    X_test_np = X_test.cpu().numpy()
+    
+    
+    # --- Test Rule-Space SSL with sklearn ---
+    print("\n--- Running SSL with: Rule-Space LabelPropagation (sklearn) ---hdjnksajhjhdshgfkj")
+    lp_rule_model = LabelPropagation(kernel='knn', n_neighbors=15)
+    lp_rule_model.fit(rule_activations_train_np, y_semi_sup)
+    pseudo_label_acc = accuracy_score(y_train.numpy()[unlabeled_mask], lp_rule_model.transduction_[unlabeled_mask])
+    print(f"  Pseudo-Label Accuracy: {pseudo_label_acc * 100:.2f}%")
+    y_pred = lp_rule_model.predict(rule_activations_test_np)
+    test_acc = accuracy_score(y_test.numpy(), y_pred)
+    print(f"  Final Test Accuracy (Rule-Space): {test_acc * 100:.2f}%")
+    
+    # --- Test MF-Space SSL with sklearn ---
+    print("\n--- Running SSL with: MF-Space LabelPropagation (sklearn) ---")
+    lp_mf_model = LabelPropagation(kernel='knn', n_neighbors=10)
+    lp_mf_model.fit(mf_values_train_flat_np, y_semi_sup)
+    pseudo_label_acc_mf = accuracy_score(y_train.numpy()[unlabeled_mask], lp_mf_model.transduction_[unlabeled_mask])
+    print(f"  Pseudo-Label Accuracy: {pseudo_label_acc_mf * 100:.2f}%")
+    y_pred_mf = lp_mf_model.predict(mf_values_test_flat_np)
+    test_acc_mf = accuracy_score(y_test.numpy(), y_pred_mf)
+    print(f"  Final Test Accuracy (MF-Space): {test_acc_mf * 100:.2f}%")
+
+    # --- Raw Data SSL Baseline with sklearn ---
+    print("\n--- Running SSL with: Raw-Space LabelPropagation (sklearn) ---")
+    lp_raw_model = LabelPropagation(kernel='knn', n_neighbors=15)
+    lp_raw_model.fit(X_train_np, y_semi_sup)
+    pseudo_label_acc_raw = accuracy_score(y_train.numpy()[unlabeled_mask], lp_raw_model.transduction_[unlabeled_mask])
+    print(f"  Pseudo-Label Accuracy: {pseudo_label_acc_raw * 100:.2f}%")
+    y_pred_raw = lp_raw_model.predict(X_test_np)
+    test_acc_raw = accuracy_score(y_test.numpy(), y_pred_raw)
+    print(f"  Final Test Accuracy (Raw-Space): {test_acc_raw * 100:.2f}%")"""

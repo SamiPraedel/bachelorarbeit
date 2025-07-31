@@ -224,3 +224,24 @@ def create_weighted_sampler(X_np, y_np, batch_size, device="cpu"):
     return loader
 
 
+def _dbg(name, arr):
+    """Lightweight diagnostic print for tensors / ndarrays."""
+    import numpy as _np, torch as _torch
+    if isinstance(arr, _torch.Tensor):
+        nan = _torch.isnan(arr).sum().item()
+        inf = _torch.isinf(arr).sum().item()
+        arr_cpu = arr.detach().cpu()
+        shape_str = str(tuple(arr.shape))
+        print(f"[DBG] {name:<18} | shape {shape_str:>12} | "
+              f"nan={nan:<4} inf={inf:<4} "
+              f"min={arr_cpu.min().item(): .4g} max={arr_cpu.max().item(): .4g}")
+    else:
+        nan = _np.isnan(arr).sum()
+        inf = _np.isinf(arr).sum()
+        if hasattr(arr, 'size') and arr.size:
+            shape_str = str(arr.shape)
+            print(f"[DBG] {name:<18} | shape {shape_str:>12} | "
+                  f"nan={nan:<4} inf={inf:<4} "
+                  f"min={_np.nanmin(arr): .4g} max={_np.nanmax(arr): .4g}")
+        else:
+            print(f"[DBG] {name:<18} | EMPTY")
